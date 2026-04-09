@@ -8,10 +8,30 @@ version = "0.1.0"
 description = "Capture agent runs, diagnose failure patterns, and generate workflow interventions."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    {name = "Colin", email = "colinson@gmail.com"},
+]
+keywords = ["agent", "debugging", "ci", "workflow", "diagnostics", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = []
 
 [project.scripts]
 afteraction = "afteraction.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/txmed82/afteragent"
+Repository = "https://github.com/txmed82/afteragent"
+Issues = "https://github.com/txmed82/afteragent/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
