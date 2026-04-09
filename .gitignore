@@ -1,4 +1,4 @@
-.afteraction/
+.afteragent/
 .venv/
 __pycache__/
 *.pyc

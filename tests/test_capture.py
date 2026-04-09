@@ -5,16 +5,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from afteraction.adapters import CodexAdapter
-from afteraction.capture import run_command, validate_github_pr
-from afteraction.config import AppPaths
-from afteraction.store import Store
+from afteragent.adapters import CodexAdapter
+from afteragent.capture import run_command, validate_github_pr
+from afteragent.config import AppPaths
+from afteragent.store import Store
 
 
 class CaptureTests(unittest.TestCase):
     def test_run_command_streams_and_persists_output(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(
                 make_paths(root)
             )
@@ -43,7 +43,7 @@ class CaptureTests(unittest.TestCase):
 
     def test_validate_github_pr_creates_run_from_snapshot(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(
                 make_paths(root)
             )
@@ -54,7 +54,7 @@ class CaptureTests(unittest.TestCase):
                 "checks": [{"name": "pytest", "bucket": "fail"}],
                 "ci_runs": [],
             }
-            with patch("afteraction.capture.capture_github_context", return_value=snapshot):
+            with patch("afteragent.capture.capture_github_context", return_value=snapshot):
                 result = validate_github_pr(store, "octo/repo", 17, Path(tmpdir))
 
             run = store.get_run(str(result["run_id"]))
@@ -64,7 +64,7 @@ class CaptureTests(unittest.TestCase):
 
     def test_run_command_records_transcript_events_from_adapter(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
             command = [
                 "python3",
@@ -92,12 +92,12 @@ class CaptureTests(unittest.TestCase):
 
     def test_run_command_marks_missing_binary_as_failed(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
 
             result = run_command(
                 store,
-                ["definitely-not-a-real-binary-afteraction"],
+                ["definitely-not-a-real-binary-afteragent"],
                 Path(tmpdir),
                 stream_output=False,
             )
@@ -114,7 +114,7 @@ class CaptureTests(unittest.TestCase):
 
     def test_run_command_marks_permission_error_as_failed(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
             script_path = Path(tmpdir) / "noexec.sh"
             script_path.write_text("#!/bin/sh\necho blocked\n")
@@ -143,7 +143,7 @@ if __name__ == "__main__":
 def make_paths(root: Path) -> AppPaths:
     return AppPaths(
         root=root,
-        db_path=root / "afteraction.sqlite3",
+        db_path=root / "afteragent.sqlite3",
         artifacts_dir=root / "artifacts",
         exports_dir=root / "exports",
         applied_dir=root / "applied",

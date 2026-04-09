@@ -49,14 +49,14 @@ If a runner exposes richer output, AfterAction can extract structured events suc
 Requires Python 3.11+.
 
 ```bash
-pip install afteraction
+pip install afteragent
 ```
 
 For development:
 
 ```bash
 git clone https://github.com/txmed82/afteragent.git
-cd afteraction
+cd afteragent
 pip install -e .
 ```
 
@@ -65,24 +65,24 @@ pip install -e .
 Capture a simple run:
 
 ```bash
-afteraction exec -- python3 -c "print('hello from afteraction')"
+afteragent exec -- python3 -c "print('hello from afteragent')"
 ```
 
 List runs and inspect one:
 
 ```bash
-afteraction runs
-afteraction show <run-id>
-afteraction diagnose <run-id>
+afteragent runs
+afteragent show <run-id>
+afteragent diagnose <run-id>
 ```
 
 Open the local viewer:
 
 ```bash
-afteraction ui
+afteragent ui
 ```
 
-By default, AfterAction stores everything in `.afteraction/` in the current repository.
+By default, AfterAction stores everything in `.afteragent/` in the current repository.
 
 ## Common use cases
 
@@ -91,9 +91,9 @@ By default, AfterAction stores everything in `.afteraction/` in the current repo
 Use this when you already know what command you want to run and you want the full trace.
 
 ```bash
-afteraction exec -- codex run "Fix the failing tests"
-afteraction exec -- openclaw repair
-afteraction exec -- python3 scripts/repair.py
+afteragent exec -- codex run "Fix the failing tests"
+afteragent exec -- openclaw repair
+afteragent exec -- python3 scripts/repair.py
 ```
 
 ### 2. Snapshot a live pull request before making changes
@@ -101,8 +101,8 @@ afteraction exec -- python3 scripts/repair.py
 Use this when you want the failure surface first: changed files, review threads, checks, and CI evidence.
 
 ```bash
-afteraction validate-pr --repo vega/sphinxext-altair --pr 16
-afteraction diagnose <run-id>
+afteragent validate-pr --repo vega/sphinxext-altair --pr 16
+afteragent diagnose <run-id>
 ```
 
 ### 3. Export or apply interventions from a prior run
@@ -110,8 +110,8 @@ afteraction diagnose <run-id>
 Use this when a failed run surfaced useful guidance you want to preserve.
 
 ```bash
-afteraction export-interventions <run-id>
-afteraction apply-interventions <run-id>
+afteragent export-interventions <run-id>
+afteragent apply-interventions <run-id>
 ```
 
 Typical outputs include:
@@ -126,9 +126,9 @@ Typical outputs include:
 Use this when you want to retry from a known failure with interventions already loaded.
 
 ```bash
-afteraction replay <run-id> -- python3 -c "import os; print(os.environ['AFTERACTION_SOURCE_RUN'])"
-afteraction replay --runner claude-code <run-id> -- claude "Fix the failing PR"
-afteraction replay --runner codex <run-id> -- codex run "Address review comments"
+afteragent replay <run-id> -- python3 -c "import os; print(os.environ['AFTERACTION_SOURCE_RUN'])"
+afteragent replay --runner claude-code <run-id> -- claude "Fix the failing PR"
+afteragent replay --runner codex <run-id> -- codex run "Address review comments"
 ```
 
 ### 5. Run the full repair loop in one command
@@ -136,8 +136,8 @@ afteraction replay --runner codex <run-id> -- codex run "Address review comments
 Use this when you want to validate a PR, apply interventions, and launch the next attempt in one step.
 
 ```bash
-afteraction attempt-repair --repo vega/sphinxext-altair --pr 16 -- python3 -c "print('repair')"
-afteraction attempt-repair --run-id <run-id> --runner openclaw -- openclaw repair
+afteragent attempt-repair --repo vega/sphinxext-altair --pr 16 -- python3 -c "print('repair')"
+afteragent attempt-repair --run-id <run-id> --runner openclaw -- openclaw repair
 ```
 
 ## Typical workflow
@@ -145,19 +145,19 @@ afteraction attempt-repair --run-id <run-id> --runner openclaw -- openclaw repai
 For a live pull request:
 
 ```bash
-afteraction validate-pr --repo owner/name --pr 123
-afteraction diagnose <validation-run-id>
-afteraction apply-interventions <validation-run-id>
-afteraction replay --runner claude-code <validation-run-id> -- claude "Fix the PR"
-afteraction ui
+afteragent validate-pr --repo owner/name --pr 123
+afteragent diagnose <validation-run-id>
+afteragent apply-interventions <validation-run-id>
+afteragent replay --runner claude-code <validation-run-id> -- claude "Fix the PR"
+afteragent ui
 ```
 
 For an existing failed local run:
 
 ```bash
-afteraction diagnose <run-id>
-afteraction export-interventions <run-id>
-afteraction replay <run-id> -- python3 scripts/repair.py
+afteragent diagnose <run-id>
+afteragent export-interventions <run-id>
+afteragent replay <run-id> -- python3 scripts/repair.py
 ```
 
 ## What the replay score means
@@ -177,9 +177,9 @@ That makes it easier to answer a simple question: did the intervention actually 
 
 ## Files you will see
 
-Inside `.afteraction/` you will typically find:
+Inside `.afteragent/` you will typically find:
 
-- `afteraction.sqlite3`: run metadata and event history
+- `afteragent.sqlite3`: run metadata and event history
 - `artifacts/`: stdout, stderr, git diffs, GitHub context, and CI logs
 - `exports/`: exported intervention sets
 - `applied/`: applied instruction patches and manifests

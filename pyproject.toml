@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "afteraction"
+name = "afteragent"
 version = "0.1.0"
 description = "Capture agent runs, diagnose failure patterns, and generate workflow interventions."
 readme = "README.md"
@@ -26,7 +26,7 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-afteraction = "afteraction.cli:main"
+afteragent = "afteragent.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/txmed82/afteragent"

@@ -1,6 +1,6 @@
 import unittest
 
-from afteraction.cli import normalize_replay_args
+from afteragent.cli import normalize_replay_args
 
 
 class CliTests(unittest.TestCase):
