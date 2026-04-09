@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from afteraction.adapters import OpenClawAdapter, ShellAdapter, select_runner_adapter
+from afteragent.adapters import OpenClawAdapter, ShellAdapter, select_runner_adapter
 
 
 class AdapterTests(unittest.TestCase):

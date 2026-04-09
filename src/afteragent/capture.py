@@ -36,7 +36,7 @@ def run_command(
         command_text,
         str(cwd),
         created_at,
-        summary=summary or "Captured by afteraction exec",
+        summary=summary or "Captured by afteragent exec",
     )
     store.add_event(
         run_id,

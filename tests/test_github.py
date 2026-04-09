@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from afteraction.github import capture_github_context
+from afteragent.github import capture_github_context
 
 
 class GitHubCaptureTests(unittest.TestCase):
@@ -14,9 +14,9 @@ class GitHubCaptureTests(unittest.TestCase):
             artifact_dir.mkdir(parents=True, exist_ok=True)
 
             with (
-                patch("afteraction.github.repo_identity", return_value={"nameWithOwner": "octo/repo"}),
+                patch("afteragent.github.repo_identity", return_value={"nameWithOwner": "octo/repo"}),
                 patch(
-                    "afteraction.github.pr_snapshot",
+                    "afteragent.github.pr_snapshot",
                     return_value={
                         "number": 17,
                         "title": "Fix failing PR loop",
@@ -43,7 +43,7 @@ class GitHubCaptureTests(unittest.TestCase):
                     },
                 ),
                 patch(
-                    "afteraction.github.fetch_review_threads",
+                    "afteragent.github.fetch_review_threads",
                     return_value=[
                         {
                             "id": "thread-1",
@@ -57,7 +57,7 @@ class GitHubCaptureTests(unittest.TestCase):
                     ],
                 ),
                 patch(
-                    "afteraction.github.pr_checks",
+                    "afteragent.github.pr_checks",
                     return_value=[
                         {
                             "bucket": "fail",
@@ -72,7 +72,7 @@ class GitHubCaptureTests(unittest.TestCase):
                     ],
                 ),
                 patch(
-                    "afteraction.github.fetch_workflow_runs",
+                    "afteragent.github.fetch_workflow_runs",
                     return_value=[
                         {
                             "database_id": 99,
