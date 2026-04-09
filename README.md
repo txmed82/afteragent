@@ -49,8 +49,14 @@ If a runner exposes richer output, AfterAction can extract structured events suc
 Requires Python 3.11+.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+pip install afteraction
+```
+
+For development:
+
+```bash
+git clone https://github.com/txmed82/afteragent.git
+cd afteraction
 pip install -e .
 ```
 
