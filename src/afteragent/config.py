@@ -15,10 +15,10 @@ class AppPaths:
 
 
 def resolve_paths(base_dir: Path | None = None) -> AppPaths:
-    root = (base_dir or Path.cwd()) / ".afteraction"
+    root = (base_dir or Path.cwd()) / ".afteragent"
     return AppPaths(
         root=root,
-        db_path=root / "afteraction.sqlite3",
+        db_path=root / "afteragent.sqlite3",
         artifacts_dir=root / "artifacts",
         exports_dir=root / "exports",
         applied_dir=root / "applied",

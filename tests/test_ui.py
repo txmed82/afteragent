@@ -2,16 +2,16 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from afteraction.config import AppPaths
-from afteraction.store import Store
-from afteraction.ui import summarize_effectiveness
-from afteraction.workflow import replay_run
+from afteragent.config import AppPaths
+from afteragent.store import Store
+from afteragent.ui import summarize_effectiveness
+from afteragent.workflow import replay_run
 
 
 class UiTests(unittest.TestCase):
     def test_summarize_effectiveness_rolls_up_replay_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
             seed_diagnosed_run(store, "run123")
 
@@ -61,7 +61,7 @@ def seed_diagnosed_run(store: Store, run_id: str) -> None:
 def make_paths(root: Path) -> AppPaths:
     return AppPaths(
         root=root,
-        db_path=root / "afteraction.sqlite3",
+        db_path=root / "afteragent.sqlite3",
         artifacts_dir=root / "artifacts",
         exports_dir=root / "exports",
         applied_dir=root / "applied",

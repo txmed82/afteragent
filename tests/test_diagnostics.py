@@ -3,10 +3,10 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from afteraction.config import AppPaths
-from afteraction.diagnostics import build_interventions, count_changed_files, extract_failure_files
-from afteraction.models import PatternFinding
-from afteraction.store import Store
+from afteragent.config import AppPaths
+from afteragent.diagnostics import build_interventions, count_changed_files, extract_failure_files
+from afteragent.models import PatternFinding
+from afteragent.store import Store
 
 
 class DiagnosticsTests(unittest.TestCase):
@@ -64,10 +64,10 @@ diff --git a/a.py b/a.py
 
     def test_analyze_run_uses_cross_run_pr_signals(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             paths = AppPaths(
                 root=root,
-                db_path=root / "afteraction.sqlite3",
+                db_path=root / "afteragent.sqlite3",
                 artifacts_dir=root / "artifacts",
                 exports_dir=root / "exports",
                 applied_dir=root / "applied",
@@ -174,7 +174,7 @@ diff --git a/a.py b/a.py
                 )
             )
 
-            from afteraction.diagnostics import analyze_run
+            from afteragent.diagnostics import analyze_run
 
             findings, interventions = analyze_run(store, "curr123")
 
@@ -190,10 +190,10 @@ diff --git a/a.py b/a.py
 
     def test_analyze_github_validation_run_emits_github_only_findings(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             paths = AppPaths(
                 root=root,
-                db_path=root / "afteraction.sqlite3",
+                db_path=root / "afteragent.sqlite3",
                 artifacts_dir=root / "artifacts",
                 exports_dir=root / "exports",
                 applied_dir=root / "applied",
@@ -262,7 +262,7 @@ diff --git a/a.py b/a.py
                 )
             )
 
-            from afteraction.diagnostics import analyze_run
+            from afteragent.diagnostics import analyze_run
 
             findings, interventions = analyze_run(store, "ghonly1")
             codes = {finding.code for finding in findings}

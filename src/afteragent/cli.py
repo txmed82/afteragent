@@ -15,7 +15,7 @@ from .workflow import apply_interventions, attempt_repair, export_interventions,
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="afteraction")
+    parser = argparse.ArgumentParser(prog="afteragent")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     exec_parser = subparsers.add_parser("exec", help="Capture a command run")
@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         if command and command[0] == "--":
             command = command[1:]
         if not command:
-            parser.error("afteraction exec requires a command after --")
+            parser.error("afteragent exec requires a command after --")
         if args.github_repo or args.github_pr:
             result = run_command(
                 store,
@@ -220,9 +220,9 @@ def main(argv: list[str] | None = None) -> int:
         if command and command[0] == "--":
             command = command[1:]
         if not command:
-            parser.error("afteraction attempt-repair requires a command after --")
+            parser.error("afteragent attempt-repair requires a command after --")
         if args.repo and args.pr is None:
-            parser.error("afteraction attempt-repair requires --pr when using --repo")
+            parser.error("afteragent attempt-repair requires --pr when using --repo")
         result = attempt_repair(
             store,
             cwd=Path.cwd(),

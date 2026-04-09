@@ -3,15 +3,15 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from afteraction.config import AppPaths
-from afteraction.store import Store
-from afteraction.workflow import apply_interventions, attempt_repair, export_interventions, replay_run
+from afteragent.config import AppPaths
+from afteragent.store import Store
+from afteragent.workflow import apply_interventions, attempt_repair, export_interventions, replay_run
 
 
 class WorkflowTests(unittest.TestCase):
     def test_export_and_apply_interventions_write_files(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
             seed_diagnosed_run(store, "run123")
 
@@ -35,7 +35,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_apply_interventions_targets_existing_claude_file(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
             seed_diagnosed_run(store, "run123")
             claude_path = Path(tmpdir) / "CLAUDE.md"
@@ -50,7 +50,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_replay_run_injects_context_env(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
             seed_diagnosed_run(store, "run123")
 
@@ -75,7 +75,7 @@ class WorkflowTests(unittest.TestCase):
             artifact_dir = store.run_artifact_dir(str(result["run_id"]))
             stdout_text = (artifact_dir / "stdout.log").read_text()
             self.assertIn("run123", stdout_text)
-            self.assertIn(".afteraction/replays/run123", stdout_text)
+            self.assertIn(".afteragent/replays/run123", stdout_text)
             self.assertIn("AGENTS.md", stdout_text)
             self.assertIn("shell", stdout_text)
             replay_rows = store.list_replay_runs_for_source("run123")
@@ -88,7 +88,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_attempt_repair_applies_and_replays_from_existing_run(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
             seed_diagnosed_run(store, "run123")
 
@@ -107,7 +107,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_attempt_repair_can_force_runner_preset(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
             seed_diagnosed_run(store, "run123")
 
@@ -125,7 +125,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_apply_interventions_supersedes_prior_pr_scoped_sets(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / ".afteraction"
+            root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
             seed_diagnosed_run(store, "run123")
             seed_review_instruction_run(store, "run456")
@@ -239,7 +239,7 @@ def seed_review_instruction_run(store: Store, run_id: str) -> None:
 def make_paths(root: Path) -> AppPaths:
     return AppPaths(
         root=root,
-        db_path=root / "afteraction.sqlite3",
+        db_path=root / "afteragent.sqlite3",
         artifacts_dir=root / "artifacts",
         exports_dir=root / "exports",
         applied_dir=root / "applied",

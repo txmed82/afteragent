@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from afteraction.config import resolve_paths
-from afteraction.diagnostics import analyze_run
-from afteraction.store import Store
+from afteragent.config import resolve_paths
+from afteragent.diagnostics import analyze_run
+from afteragent.store import Store
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -44,7 +44,7 @@ class EndToEndTests(unittest.TestCase):
                         gh_context=python_lint_context(),
                     )
 
-                    run_afteraction(
+                    run_afteragent(
                         repo_dir,
                         "attempt-repair",
                         "--run-id",
@@ -122,7 +122,7 @@ class EndToEndTests(unittest.TestCase):
                         gh_context=scenario["gh_context"],
                     )
 
-                    run_afteraction(repo_dir, "apply-interventions", "golden123")
+                    run_afteragent(repo_dir, "apply-interventions", "golden123")
 
                     store = Store(resolve_paths(repo_dir))
                     findings, interventions = analyze_run(store, "golden123")
@@ -142,13 +142,13 @@ class EndToEndTests(unittest.TestCase):
                     self.assertIn("AfterAction Interventions", target_text)
 
 
-def run_afteraction(repo_dir: Path, *args: str, bin_dir: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run_afteragent(repo_dir: Path, *args: str, bin_dir: Path | None = None) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC_ROOT)
     if bin_dir is not None:
         env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     return subprocess.run(
-        [sys.executable, "-m", "afteraction.cli", *args],
+        [sys.executable, "-m", "afteragent.cli", *args],
         cwd=str(repo_dir),
         env=env,
         text=True,
@@ -166,7 +166,7 @@ def init_fixture_repo(repo_dir: Path, instruction_files: list[str]) -> None:
     for name in instruction_files:
         (repo_dir / name).write_text(f"# {name}\n")
     run_git(repo_dir, "init")
-    run_git(repo_dir, "config", "user.email", "afteraction@example.com")
+    run_git(repo_dir, "config", "user.email", "afteragent@example.com")
     run_git(repo_dir, "config", "user.name", "AfterAction Tests")
     run_git(repo_dir, "add", ".")
     run_git(repo_dir, "commit", "-m", "init")
