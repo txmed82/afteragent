@@ -13,6 +13,7 @@ from afteragent.transcripts import (
     parse_claude_code_jsonl,
 )
 
+
 FIXTURES = Path(__file__).parent / "fixtures" / "transcripts" / "claude_code"
 
 
@@ -88,3 +89,33 @@ def test_claude_code_parser_includes_line_number_raw_ref():
 def test_claude_code_parser_never_raises_on_completely_broken_input():
     events = parse_claude_code_jsonl(run_id="r1", jsonl_text="\x00\x01not jsonl at all")
     assert isinstance(events, list)
+
+
+def test_claude_code_parser_attaches_tool_results_to_tool_events():
+    """Regression: tool_result content must land on the matching tool_use event,
+    not be emitted as a separate user_message event. Tool_use and tool_result
+    live in different JSONL records, so the attachment must happen across
+    records via tool_use_id."""
+    text = (FIXTURES / "simple_edit_run.jsonl").read_text()
+    events = parse_claude_code_jsonl(run_id="r1", jsonl_text=text)
+
+    # The Read tool_use event must carry the file content as its output_excerpt.
+    reads = [e for e in events if e.kind == KIND_FILE_READ]
+    assert len(reads) == 1
+    read = reads[0]
+    assert "def test_foo" in read.output_excerpt
+    assert read.status == "success"
+
+    # The Edit tool_use event must carry the edit confirmation.
+    edits = [e for e in events if e.kind == KIND_FILE_EDIT]
+    assert len(edits) == 1
+    edit = edits[0]
+    assert "File edited successfully" in edit.output_excerpt
+    assert edit.status == "success"
+
+    # The test_run (pytest) event must carry the pytest output and success status.
+    test_runs = [e for e in events if e.kind == KIND_TEST_RUN]
+    assert len(test_runs) == 1
+    test_run = test_runs[0]
+    assert "1 passed" in test_run.output_excerpt
+    assert test_run.status == "success"

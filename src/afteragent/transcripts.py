@@ -251,9 +251,14 @@ def parse_claude_code_jsonl(run_id: str, jsonl_text: str) -> list[TranscriptEven
     """Parse a Claude Code session JSONL into normalized transcript events.
 
     Never raises. Malformed lines become parse_error events; the rest still parse.
+    Tool results from user-role messages are attached to their matching tool_use
+    events by tool_use_id, not emitted as standalone user_message events.
     """
     events: list[TranscriptEvent] = []
     sequence = 0
+    # Map from tool_use_id to the already-created TranscriptEvent so tool_result
+    # blocks (which arrive in a later record) can update the right event in place.
+    tool_events_by_id: dict[str, TranscriptEvent] = {}
 
     for line_num, line in enumerate(jsonl_text.splitlines(), start=1):
         if not line.strip():
@@ -279,6 +284,7 @@ def parse_claude_code_jsonl(run_id: str, jsonl_text: str) -> list[TranscriptEven
                 record=record,
                 line_num=line_num,
                 next_sequence=sequence,
+                tool_events_by_id=tool_events_by_id,
             )
         except Exception as exc:
             events.append(
@@ -305,8 +311,15 @@ def _events_from_jsonl_record(
     record: dict,
     line_num: int,
     next_sequence: int,
+    tool_events_by_id: dict[str, TranscriptEvent],
 ) -> list[TranscriptEvent]:
-    """Translate a single JSONL record into zero or more TranscriptEvents."""
+    """Translate a single JSONL record into zero or more TranscriptEvents.
+
+    tool_events_by_id is a running map (maintained by the caller) from
+    tool_use_id to the already-emitted event. tool_use blocks register into it;
+    tool_result blocks look up and mutate the registered event directly, which
+    is why they do NOT produce a new event and do NOT advance the sequence.
+    """
     out: list[TranscriptEvent] = []
     seq = next_sequence
     raw_ref = f"line:{line_num}"
@@ -338,12 +351,11 @@ def _events_from_jsonl_record(
 
     message = record.get("message")
     if not isinstance(message, dict):
-        return out  # skip non-message records silently
+        return out
 
     role = message.get("role")
     content = message.get("content")
     if not isinstance(content, list):
-        # e.g. string content. Treat as assistant/user message.
         text = str(content) if content is not None else ""
         kind = KIND_ASSISTANT_MESSAGE if role == "assistant" else KIND_USER_MESSAGE
         if text:
@@ -395,35 +407,33 @@ def _events_from_jsonl_record(
         elif btype == "tool_use":
             tool_name = block.get("name") or "unknown"
             tool_input = block.get("input") or {}
+            tool_use_id = block.get("id") or ""
             kind = _classify_tool(tool_name, tool_input)
             target = _extract_target(tool_name, tool_input)
-            out.append(
-                TranscriptEvent(
-                    run_id=run_id,
-                    sequence=seq,
-                    kind=kind,
-                    tool_name=tool_name,
-                    target=target,
-                    inputs_summary=truncate(
-                        json.dumps(tool_input, sort_keys=True, default=str),
-                        INPUTS_SUMMARY_MAX,
-                    ),
-                    output_excerpt="",
-                    status="unknown",
-                    source=SOURCE_CLAUDE_CODE_JSONL,
-                    timestamp=timestamp,
-                    raw_ref=raw_ref,
-                )
+            event = TranscriptEvent(
+                run_id=run_id,
+                sequence=seq,
+                kind=kind,
+                tool_name=tool_name,
+                target=target,
+                inputs_summary=truncate(
+                    json.dumps(tool_input, sort_keys=True, default=str),
+                    INPUTS_SUMMARY_MAX,
+                ),
+                output_excerpt="",
+                status="unknown",
+                source=SOURCE_CLAUDE_CODE_JSONL,
+                timestamp=timestamp,
+                raw_ref=raw_ref,
             )
+            out.append(event)
+            if tool_use_id:
+                tool_events_by_id[tool_use_id] = event
             seq += 1
 
         elif btype == "tool_result":
-            # Tool results update the most recent tool_use event's status
-            # and output_excerpt. Do this by modifying the last event in out
-            # if it's a tool event; otherwise emit a standalone user_message.
             result_content = block.get("content", "")
             if isinstance(result_content, list):
-                # tool_result content can be a list of content blocks
                 result_text = "".join(
                     c.get("text", "") if isinstance(c, dict) else str(c)
                     for c in result_content
@@ -431,15 +441,17 @@ def _events_from_jsonl_record(
             else:
                 result_text = str(result_content)
             is_error = bool(block.get("is_error"))
-            # Find the most recent tool event to attach to.
-            attached = False
-            for ev in reversed(out):
-                if ev.tool_name is not None:
-                    ev.output_excerpt = truncate(result_text, OUTPUT_EXCERPT_MAX)
-                    ev.status = "error" if is_error else "success"
-                    attached = True
-                    break
-            if not attached:
+            tool_use_id = block.get("tool_use_id") or ""
+            target_event = tool_events_by_id.get(tool_use_id)
+            if target_event is not None:
+                # Mutate the already-emitted tool_use event in place. No new
+                # event is created and sequence does not advance — the result
+                # is an annotation on the existing tool call.
+                target_event.output_excerpt = truncate(result_text, OUTPUT_EXCERPT_MAX)
+                target_event.status = "error" if is_error else "success"
+            else:
+                # Unmatched tool_result — emit as a standalone user_message so
+                # the content isn't lost.
                 out.append(
                     TranscriptEvent(
                         run_id=run_id,
