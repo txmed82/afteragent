@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from ..effectiveness import EffectivenessReport, format_metrics_for_prompt
 from ..models import PatternFinding, RunRecord, TranscriptEventRow
 from ..store import Store
 
@@ -247,10 +248,20 @@ Rules:
 Output via the `author_interventions` tool."""
 
 
-def build_diagnosis_prompt(context: DiagnosisContext) -> tuple[str, str]:
+def build_diagnosis_prompt(
+    context: DiagnosisContext,
+    effectiveness_report: EffectivenessReport | None = None,
+) -> tuple[str, str]:
     """Build (system, user) strings for the findings call."""
+    effectiveness_block = ""
+    if effectiveness_report is not None:
+        effectiveness_block = format_metrics_for_prompt(
+            effectiveness_report, section="findings"
+        )
+
     def rebuild_diagnosis(ctx: DiagnosisContext) -> str:
-        return _build_base_context_block(ctx, include_findings_header="Rule-based findings")
+        base = _build_base_context_block(ctx, include_findings_header="Rule-based findings")
+        return f"{effectiveness_block}\n\n{base}" if effectiveness_block else base
 
     user = rebuild_diagnosis(context)
     user = _enforce_token_budget(user, context, rebuild_diagnosis)
@@ -260,27 +271,37 @@ def build_diagnosis_prompt(context: DiagnosisContext) -> tuple[str, str]:
 def build_interventions_prompt(
     context: DiagnosisContext,
     merged_findings: list[MergedFinding],
+    effectiveness_report: EffectivenessReport | None = None,
 ) -> tuple[str, str]:
     """Build (system, user) strings for the interventions call."""
+    effectiveness_block = ""
+    if effectiveness_report is not None:
+        effectiveness_block = format_metrics_for_prompt(
+            effectiveness_report, section="interventions"
+        )
+
+    if merged_findings:
+        findings_section = "## Confirmed findings to address\n\n" + json.dumps(
+            [
+                {
+                    "code": f.code,
+                    "title": f.title,
+                    "severity": f.severity,
+                    "summary": f.summary,
+                    "evidence": f.evidence,
+                    "source": f.source,
+                }
+                for f in merged_findings
+            ],
+            indent=2,
+        )
+    else:
+        findings_section = "## Confirmed findings to address\n\n(none)"
+
     def rebuild_interventions(ctx: DiagnosisContext) -> str:
         base = _build_base_context_block(ctx, include_findings_header=None)
-        if merged_findings:
-            findings_section = "## Confirmed findings to address\n\n" + json.dumps(
-                [
-                    {
-                        "code": f.code,
-                        "title": f.title,
-                        "severity": f.severity,
-                        "summary": f.summary,
-                        "evidence": f.evidence,
-                        "source": f.source,
-                    }
-                    for f in merged_findings
-                ],
-                indent=2,
-            )
-        else:
-            findings_section = "## Confirmed findings to address\n\n(none)"
+        if effectiveness_block:
+            return f"{effectiveness_block}\n\n{findings_section}\n\n{base}"
         return f"{findings_section}\n\n{base}"
 
     user = rebuild_interventions(context)
