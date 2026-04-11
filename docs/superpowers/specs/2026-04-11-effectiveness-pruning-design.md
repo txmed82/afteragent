@@ -552,7 +552,7 @@ Sub-project 3 ships when **all** of the following are true:
 4. When `compute_effectiveness_metrics` raises (simulated), the enhancer still completes successfully and the prompts fall back to the sub-project 2 shape without the effectiveness block.
 5. `afteragent enhance` on a store with zero replays works identically to sub-project 2 — no effectiveness block in the prompt, no visible difference from the user's perspective.
 6. Rule-based diagnosis paths (`afteragent exec` without `--enhance`, `afteragent diagnose`) are completely unchanged. Sub-project 3 is invisible to users who don't use the LLM layer.
-7. All tests pass: sub-project 2's 179 tests still green + 30 new tests across effectiveness, prompts, enhancer, and CLI ≈ ≈209 total pytest tests.
+7. All tests pass: sub-project 2's 179 tests still green + 30 new tests across effectiveness, prompts, enhancer, and CLI ≈209 total pytest tests.
 8. **Manual dogfood acceptance:** accumulate ≥5 replays on a real project, run `afteragent stats`, confirm the numbers match the stored `comparison_json` rows by spot-check. Then run `afteragent enhance <run-id>` with real LLM credentials and confirm the effectiveness block appears in the prompt (via enhanced logging or by inspecting the LLM's response reasoning). This is the quality-bar step that requires real replay data + real LLM credentials.
 
 ## Known followups (non-blocking)
