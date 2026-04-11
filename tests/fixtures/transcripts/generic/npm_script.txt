@@ -1,0 +1,6 @@
+> my-package@1.0.0 build
+> tsc --noEmit && webpack --mode production
+
+[webpack-cli] Compilation finished
+asset main.js 42.1 KiB [emitted] (name: main)
+webpack 5.89.0 compiled successfully in 1203 ms

@@ -1,0 +1,18 @@
+============================= test session starts =============================
+platform darwin -- Python 3.11.6, pytest-8.0.0
+collected 4 items
+
+tests/test_foo.py::test_passing PASSED                                   [ 25%]
+tests/test_foo.py::test_failing FAILED                                   [ 50%]
+tests/test_bar.py::test_one PASSED                                       [ 75%]
+tests/test_bar.py::test_two PASSED                                       [100%]
+
+=================================== FAILURES ===================================
+______________________________ test_failing _____________________________________
+
+    def test_failing():
+>       assert 1 == 2
+E       assert 1 == 2
+
+tests/test_foo.py:7: AssertionError
+========================= 1 failed, 3 passed in 0.04s ==========================
