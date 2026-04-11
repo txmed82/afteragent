@@ -6,6 +6,8 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
+from .transcripts import TranscriptEvent, parse_generic_stdout
+
 KNOWN_INSTRUCTION_FILES = (
     "AGENTS.md",
     "CLAUDE.md",
@@ -89,6 +91,33 @@ class RunnerAdapter:
                 continue
             events.extend(self._parse_pattern_events(text, source=path.name))
         return dedupe_events(events)
+
+    def pre_launch_snapshot(self, cwd: Path) -> dict:
+        """Snapshot runner-specific pre-launch state (e.g. transcript directory).
+
+        Called by capture.run_command before subprocess.Popen. The returned
+        dict is passed back into parse_transcript after the subprocess exits.
+        Default implementation returns an empty dict.
+        """
+        del cwd
+        return {}
+
+    def parse_transcript(
+        self,
+        run_id: str,
+        artifact_dir: Path,
+        stdout: str,
+        stderr: str,
+        pre_launch_state: dict,
+    ) -> list[TranscriptEvent]:
+        """Parse the runner's transcript into normalized TranscriptEvent objects.
+
+        Default implementation uses the generic stdout heuristic parser.
+        Runner subclasses override to provide richer parsing.
+        Must never raise — all failures become parse_error events.
+        """
+        del artifact_dir, pre_launch_state
+        return parse_generic_stdout(run_id=run_id, stdout=stdout, stderr=stderr)
 
     def _parse_pattern_events(self, text: str, source: str) -> list[dict]:
         events = []

@@ -2,7 +2,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from afteragent.adapters import OpenClawAdapter, ShellAdapter, select_runner_adapter
+from afteragent.adapters import ClaudeCodeAdapter, OpenClawAdapter, RunnerAdapter, ShellAdapter, select_runner_adapter
+from afteragent.transcripts import KIND_TEST_RUN, SOURCE_STDOUT_HEURISTIC
 
 
 class AdapterTests(unittest.TestCase):
@@ -77,3 +78,61 @@ class AdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_base_pre_launch_snapshot_returns_empty_dict(tmp_path: Path):
+    adapter = ShellAdapter()
+    state = adapter.pre_launch_snapshot(tmp_path)
+    assert state == {}
+
+
+def test_base_parse_transcript_uses_generic_stdout_parser(tmp_path: Path):
+    adapter = ShellAdapter()
+    stdout = "============================= test session starts ===\nFAILED: boom\n"
+    events = adapter.parse_transcript(
+        run_id="abc",
+        artifact_dir=tmp_path,
+        stdout=stdout,
+        stderr="",
+        pre_launch_state={},
+    )
+    assert len(events) >= 1
+    assert any(e.kind == KIND_TEST_RUN for e in events)
+    assert all(e.source == SOURCE_STDOUT_HEURISTIC for e in events)
+
+
+def test_base_parse_transcript_never_raises_on_garbage(tmp_path: Path):
+    adapter = ShellAdapter()
+    events = adapter.parse_transcript(
+        run_id="abc",
+        artifact_dir=tmp_path,
+        stdout="\x00\x01\x02",
+        stderr="",
+        pre_launch_state={},
+    )
+    assert isinstance(events, list)
+
+
+def test_base_parse_transcript_returns_empty_list_for_empty_input(tmp_path: Path):
+    adapter = ShellAdapter()
+    events = adapter.parse_transcript(
+        run_id="abc",
+        artifact_dir=tmp_path,
+        stdout="",
+        stderr="",
+        pre_launch_state={},
+    )
+    assert events == []
+
+
+def test_openclaw_inherits_generic_parser_by_default(tmp_path: Path):
+    adapter = OpenClawAdapter()
+    stdout = "npm test\npassed 3 tests\n"
+    events = adapter.parse_transcript(
+        run_id="abc",
+        artifact_dir=tmp_path,
+        stdout=stdout,
+        stderr="",
+        pre_launch_state={},
+    )
+    assert all(e.source == SOURCE_STDOUT_HEURISTIC for e in events)
