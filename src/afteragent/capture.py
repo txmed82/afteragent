@@ -50,7 +50,15 @@ def run_command(
             "extra_env_keys": sorted(extra_env.keys()) if extra_env else [],
         },
     )
-    pre_launch_state = active_adapter.pre_launch_snapshot(cwd)
+    # Snapshot runner-specific pre-launch state. Defensive guard matches the
+    # spec's error-handling contract: if the adapter raises (permission on
+    # ~/.claude/projects/, RuntimeError from Path.home() in a stripped env,
+    # or a buggy subclass), fall through with an empty state so post-exit
+    # resolution sees zero candidates and the generic fallback parser runs.
+    try:
+        pre_launch_state = active_adapter.pre_launch_snapshot(cwd)
+    except Exception:
+        pre_launch_state = {}
 
     artifact_dir = store.run_artifact_dir(run_id)
     before_diff = capture_git_diff(cwd)
