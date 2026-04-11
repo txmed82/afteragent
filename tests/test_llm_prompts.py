@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 
 from afteragent.config import resolve_paths
+from afteragent.effectiveness import EffectivenessMetric, EffectivenessReport
 from afteragent.llm.prompts import (
     DiagnosisContext,
     MergedFinding,
@@ -300,3 +301,89 @@ def test_build_interventions_prompt_handles_empty_merged_findings(tmp_path):
     system, user = build_interventions_prompt(ctx, [])
     assert isinstance(system, str) and isinstance(user, str)
     assert len(system) > 0 and len(user) > 0
+
+
+def _sample_report() -> EffectivenessReport:
+    return EffectivenessReport(
+        total_replays=10,
+        min_samples_threshold=5,
+        finding_metrics=[
+            EffectivenessMetric(
+                key="low_diff_overlap",
+                kind="finding_code",
+                source="rule",
+                samples=10,
+                successes=8,
+                success_rate=0.8,
+            ),
+        ],
+        intervention_metrics=[
+            EffectivenessMetric(
+                key="prompt_patch/task_prompt",
+                kind="intervention_type_target",
+                source="mixed",
+                samples=8,
+                successes=6,
+                success_rate=0.75,
+            ),
+        ],
+        generated_at="2026-04-11T12:00:00Z",
+    )
+
+
+def test_build_diagnosis_prompt_includes_effectiveness_section_when_report_passed(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    ctx = load_diagnosis_context(store, "run1")
+    report = _sample_report()
+
+    _, user = build_diagnosis_prompt(ctx, effectiveness_report=report)
+
+    assert "## Historical effectiveness (finding codes)" in user
+    assert "code=low_diff_overlap" in user
+    assert "80%" in user
+
+
+def test_build_diagnosis_prompt_omits_effectiveness_section_when_report_none(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    ctx = load_diagnosis_context(store, "run1")
+
+    _, user = build_diagnosis_prompt(ctx, effectiveness_report=None)
+
+    assert "## Historical effectiveness" not in user
+
+
+def test_build_interventions_prompt_includes_effectiveness_section_when_report_passed(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    ctx = load_diagnosis_context(store, "run1")
+    report = _sample_report()
+
+    _, user = build_interventions_prompt(
+        ctx, merged_findings=[], effectiveness_report=report
+    )
+
+    assert "## Historical effectiveness (intervention type/target)" in user
+    assert "pair=prompt_patch/task_prompt" in user
+    assert "75%" in user
+
+
+def test_build_interventions_prompt_omits_effectiveness_section_when_report_none(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    ctx = load_diagnosis_context(store, "run1")
+
+    _, user = build_interventions_prompt(
+        ctx, merged_findings=[], effectiveness_report=None
+    )
+
+    assert "## Historical effectiveness" not in user
+
+
+def test_build_diagnosis_prompt_with_effectiveness_respects_token_budget(tmp_path):
+    """Adding the effectiveness block should not push the prompt over budget
+    on a typical-sized run."""
+    store = _seed_run_with_artifacts(tmp_path)
+    ctx = load_diagnosis_context(store, "run1")
+    report = _sample_report()
+
+    _, user = build_diagnosis_prompt(ctx, effectiveness_report=report)
+
+    assert estimate_tokens(user) <= 25_000

@@ -2,6 +2,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+from unittest.mock import patch
 
 import pytest
 
@@ -276,3 +277,96 @@ def test_enhance_interventions_call_failure_persists_merged_findings(tmp_path):
     kinds_to_status = {g["kind"]: g["status"] for g in gens}
     assert kinds_to_status.get("findings") == "success"
     assert kinds_to_status.get("interventions") == "error"
+
+
+def test_enhance_computes_effectiveness_report_and_passes_to_both_prompts(tmp_path):
+    """The enhancer should call compute_effectiveness_metrics ONCE and pass
+    the result into both prompt builder calls."""
+    from afteragent.effectiveness import EffectivenessReport
+
+    store = _make_store(tmp_path)
+    _seed_minimal_run(store)
+
+    client = StubClient(responses={
+        "report_findings": _success_findings_response([]),
+        "author_interventions": _success_interventions_response([]),
+    })
+
+    with patch(
+        "afteragent.llm.enhancer.compute_effectiveness_metrics"
+    ) as mock_compute, patch(
+        "afteragent.llm.enhancer.build_diagnosis_prompt",
+        wraps=None,
+    ) as mock_diag, patch(
+        "afteragent.llm.enhancer.build_interventions_prompt",
+        wraps=None,
+    ) as mock_inter:
+        # Make the computed report a real EffectivenessReport so the real
+        # prompt builders can run without crashing (they iterate its fields).
+        sentinel_report = EffectivenessReport(
+            total_replays=0,
+            min_samples_threshold=5,
+            finding_metrics=[],
+            intervention_metrics=[],
+            generated_at="2026-04-10T12:00:00Z",
+        )
+        mock_compute.return_value = sentinel_report
+
+        # Let the real prompt builders run so the rest of the pipeline works.
+        from afteragent.llm.prompts import (
+            build_diagnosis_prompt as real_build_diagnosis_prompt,
+            build_interventions_prompt as real_build_interventions_prompt,
+        )
+        mock_diag.side_effect = real_build_diagnosis_prompt
+        mock_inter.side_effect = real_build_interventions_prompt
+
+        enhance_diagnosis_with_llm(store, "run1", client, _make_config())
+
+        # compute_effectiveness_metrics was called exactly once.
+        assert mock_compute.call_count == 1
+
+        # Both prompt builders were called with effectiveness_report=sentinel.
+        assert mock_diag.call_count == 1
+        diag_call_kwargs = mock_diag.call_args.kwargs
+        assert diag_call_kwargs.get("effectiveness_report") is sentinel_report
+
+        assert mock_inter.call_count == 1
+        inter_call_kwargs = mock_inter.call_args.kwargs
+        assert inter_call_kwargs.get("effectiveness_report") is sentinel_report
+
+
+def test_enhance_tolerates_effectiveness_computation_failure(tmp_path):
+    """If compute_effectiveness_metrics raises, the enhancer should still
+    complete successfully with effectiveness_report=None passed to both
+    prompt builders."""
+    store = _make_store(tmp_path)
+    _seed_minimal_run(store)
+
+    client = StubClient(responses={
+        "report_findings": _success_findings_response([]),
+        "author_interventions": _success_interventions_response([]),
+    })
+
+    with patch(
+        "afteragent.llm.enhancer.compute_effectiveness_metrics",
+        side_effect=RuntimeError("simulated aggregation failure"),
+    ), patch(
+        "afteragent.llm.enhancer.build_diagnosis_prompt",
+    ) as mock_diag, patch(
+        "afteragent.llm.enhancer.build_interventions_prompt",
+    ) as mock_inter:
+        from afteragent.llm.prompts import (
+            build_diagnosis_prompt as real_build_diagnosis_prompt,
+            build_interventions_prompt as real_build_interventions_prompt,
+        )
+        mock_diag.side_effect = real_build_diagnosis_prompt
+        mock_inter.side_effect = real_build_interventions_prompt
+
+        result = enhance_diagnosis_with_llm(store, "run1", client, _make_config())
+
+        # Enhancer completed successfully, not an error.
+        assert result.status in ("success", "partial")
+
+        # Both prompt builders got effectiveness_report=None.
+        assert mock_diag.call_args.kwargs.get("effectiveness_report") is None
+        assert mock_inter.call_args.kwargs.get("effectiveness_report") is None

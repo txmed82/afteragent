@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from ..effectiveness import compute_effectiveness_metrics
 from ..models import now_utc
 from ..store import Store
 from .client import LLMClient, StructuredResponse
@@ -61,8 +62,18 @@ def enhance_diagnosis_with_llm(
             error_messages=errors,
         )
 
+    # Compute the effectiveness report once. If it fails, fall back cleanly
+    # to sub-project 2 behavior (no effectiveness block in the prompts).
+    try:
+        effectiveness_report = compute_effectiveness_metrics(store)
+    except Exception:
+        effectiveness_report = None
+
     # ----- Findings call -----
-    system, user = build_diagnosis_prompt(context)
+    system, user = build_diagnosis_prompt(
+        context,
+        effectiveness_report=effectiveness_report,
+    )
     merged: list[MergedFinding] | None = None
     findings_succeeded = False
     llm_findings_raw: list[dict] = []
@@ -131,7 +142,11 @@ def enhance_diagnosis_with_llm(
         findings_count = len(merged)
 
     # ----- Interventions call -----
-    system, user = build_interventions_prompt(context, merged)
+    system, user = build_interventions_prompt(
+        context,
+        merged,
+        effectiveness_report=effectiveness_report,
+    )
     llm_interventions: list[dict] = []
     interventions_succeeded = False
     try:
