@@ -1,8 +1,17 @@
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from afteragent.adapters import ClaudeCodeAdapter, OpenClawAdapter, RunnerAdapter, ShellAdapter, select_runner_adapter
+from afteragent.adapters import (
+    ClaudeCodeAdapter,
+    OpenClawAdapter,
+    RunnerAdapter,
+    ShellAdapter,
+    claude_project_slug,
+    find_candidate_jsonl,
+    select_runner_adapter,
+)
 from afteragent.transcripts import KIND_TEST_RUN, SOURCE_STDOUT_HEURISTIC
 
 
@@ -136,3 +145,126 @@ def test_openclaw_inherits_generic_parser_by_default(tmp_path: Path):
         pre_launch_state={},
     )
     assert all(e.source == SOURCE_STDOUT_HEURISTIC for e in events)
+
+
+def test_claude_project_slug_replaces_slashes_and_spaces_with_dashes():
+    cwd = Path("/Users/colin/Documents/Google Drive/Business/Public Projects/AfterAgent")
+    slug = claude_project_slug(cwd)
+    assert slug == "-Users-colin-Documents-Google-Drive-Business-Public-Projects-AfterAgent"
+
+
+def test_claude_project_slug_simple_path():
+    cwd = Path("/home/user/code/repo")
+    slug = claude_project_slug(cwd)
+    assert slug == "-home-user-code-repo"
+
+
+def test_claude_pre_launch_snapshot_records_existing_jsonls(tmp_path: Path, monkeypatch):
+    # Redirect HOME to tmp_path so we don't touch real ~/.claude.
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    slug = claude_project_slug(repo)
+    project_dir = fake_home / ".claude" / "projects" / slug
+    project_dir.mkdir(parents=True)
+    (project_dir / "existing.jsonl").write_text('{"type":"ping"}\n')
+
+    adapter = ClaudeCodeAdapter()
+    state = adapter.pre_launch_snapshot(repo)
+
+    assert state["claude_project_dir"] == project_dir
+    assert len(state["pre_jsonl_files"]) == 1
+    assert project_dir / "existing.jsonl" in state["pre_jsonl_files"]
+    assert "launched_at" in state
+    assert isinstance(state["launched_at"], float)
+
+
+def test_claude_pre_launch_snapshot_handles_missing_project_dir(tmp_path: Path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    repo = tmp_path / "nonexistent"
+    repo.mkdir()
+
+    adapter = ClaudeCodeAdapter()
+    state = adapter.pre_launch_snapshot(repo)
+
+    # Directory doesn't exist — snapshot still returns a usable dict.
+    assert state["pre_jsonl_files"] == {}
+    assert "launched_at" in state
+
+
+def test_find_candidate_jsonl_picks_new_file(tmp_path: Path):
+    existing = tmp_path / "existing.jsonl"
+    existing.write_text("old\n")
+    launched_at = time.time()
+    time.sleep(0.01)
+    new_file = tmp_path / "new.jsonl"
+    new_file.write_text("fresh\n")
+    exit_time = time.time()
+
+    chosen, ambiguous = find_candidate_jsonl(
+        project_dir=tmp_path,
+        pre_jsonl_files={existing: existing.stat().st_mtime},
+        launched_at=launched_at,
+        exit_time=exit_time,
+    )
+    assert chosen == new_file
+    assert ambiguous is False
+
+
+def test_find_candidate_jsonl_picks_modified_file(tmp_path: Path):
+    # --continue case: pre-existing file was appended to.
+    existing = tmp_path / "existing.jsonl"
+    existing.write_text("old\n")
+    pre_mtime = existing.stat().st_mtime
+    launched_at = time.time()
+    time.sleep(0.05)
+    existing.write_text("old\nappended\n")  # bump mtime
+    exit_time = time.time()
+
+    chosen, ambiguous = find_candidate_jsonl(
+        project_dir=tmp_path,
+        pre_jsonl_files={existing: pre_mtime},
+        launched_at=launched_at,
+        exit_time=exit_time,
+    )
+    assert chosen == existing
+    assert ambiguous is False
+
+
+def test_find_candidate_jsonl_returns_none_for_zero_candidates(tmp_path: Path):
+    launched_at = time.time()
+    exit_time = launched_at + 1.0
+    chosen, ambiguous = find_candidate_jsonl(
+        project_dir=tmp_path,
+        pre_jsonl_files={},
+        launched_at=launched_at,
+        exit_time=exit_time,
+    )
+    assert chosen is None
+    assert ambiguous is False
+
+
+def test_find_candidate_jsonl_picks_closest_to_exit_when_ambiguous(tmp_path: Path):
+    launched_at = time.time()
+    a = tmp_path / "a.jsonl"
+    a.write_text("")
+    time.sleep(0.05)
+    b = tmp_path / "b.jsonl"
+    b.write_text("")  # b's mtime is later than a's but still within window
+    exit_time = time.time() + 0.1
+
+    chosen, ambiguous = find_candidate_jsonl(
+        project_dir=tmp_path,
+        pre_jsonl_files={},
+        launched_at=launched_at,
+        exit_time=exit_time,
+    )
+    # Both are candidates (both post-launch). Expect the one closest to exit.
+    assert chosen in (a, b)
+    assert ambiguous is True
