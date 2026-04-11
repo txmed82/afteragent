@@ -63,7 +63,7 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(run.status, "failed")
             self.assertIn("failing_checks=1", run.summary or "")
 
-    def test_run_command_records_transcript_events_from_adapter(self) -> None:
+    def test_run_command_records_legacy_pattern_events_from_adapter(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / ".afteragent"
             store = Store(make_paths(root))
