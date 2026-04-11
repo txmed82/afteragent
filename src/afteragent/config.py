@@ -12,6 +12,7 @@ class AppPaths:
     exports_dir: Path
     applied_dir: Path
     replays_dir: Path
+    config_path: Path = Path()
 
 
 def resolve_paths(base_dir: Path | None = None) -> AppPaths:
@@ -23,4 +24,5 @@ def resolve_paths(base_dir: Path | None = None) -> AppPaths:
         exports_dir=root / "exports",
         applied_dir=root / "applied",
         replays_dir=root / "replays",
+        config_path=root / "config.toml",
     )
