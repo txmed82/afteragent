@@ -1,7 +1,5 @@
 import io
-import os
 import stat
-import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
