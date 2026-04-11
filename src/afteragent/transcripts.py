@@ -134,6 +134,16 @@ def parse_generic_stdout(
 
     Produces low-fidelity events tagged SOURCE_STDOUT_HEURISTIC. Never raises —
     any parser failure becomes a parse_error event.
+
+    Note on success signal: when output matches both test-runner and success
+    patterns (e.g. a passing pytest run), this parser emits TWO events:
+    a KIND_TEST_RUN event with status="unknown" AND a KIND_UNKNOWN event with
+    status="success". The success signal is stranded on KIND_UNKNOWN rather
+    than updating the test_run event's status, because the generic parser
+    cannot reliably correlate the success marker to a specific test run in
+    the combined output. Downstream consumers inferring pass/fail for
+    generic-source runs must look for a success-tagged event in the run,
+    not rely on the test_run event's status.
     """
     events: list[TranscriptEvent] = []
     sequence = 0
