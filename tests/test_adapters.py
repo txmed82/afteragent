@@ -334,3 +334,54 @@ def test_claude_code_adapter_parse_transcript_falls_back_when_no_jsonl(tmp_path:
     # No JSONL found → at least one parse_error + generic stdout events.
     assert any(e.kind == "parse_error" for e in events)
     assert any(e.source == "stdout_heuristic" for e in events)
+
+
+def test_claude_code_adapter_parse_transcript_ambiguous_candidates(tmp_path: Path, monkeypatch):
+    """Verify the ambiguity path: when multiple JSONL candidates exist, the
+    adapter prepends a parse_error event and re-numbers sequences so they
+    remain monotonic."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    slug = claude_project_slug(repo)
+    project_dir = fake_home / ".claude" / "projects" / slug
+    project_dir.mkdir(parents=True)
+
+    adapter = ClaudeCodeAdapter()
+    pre_state = adapter.pre_launch_snapshot(repo)
+
+    # Write TWO jsonls after the snapshot to trigger ambiguity.
+    fixture = Path(__file__).parent / "fixtures" / "transcripts" / "claude_code" / "simple_edit_run.jsonl"
+    fixture_text = fixture.read_text()
+    (project_dir / "sess-a.jsonl").write_text(fixture_text)
+    import time as _time
+    _time.sleep(0.05)
+    (project_dir / "sess-b.jsonl").write_text(fixture_text)
+
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+
+    events = adapter.parse_transcript(
+        run_id="r1",
+        artifact_dir=artifact_dir,
+        stdout="",
+        stderr="",
+        pre_launch_state=pre_state,
+    )
+
+    # First event should be the ambiguity parse_error.
+    assert events[0].kind == "parse_error"
+    assert "multiple JSONL candidates" in events[0].output_excerpt
+    assert events[0].sequence == 0
+
+    # All subsequent sequences must be monotonic and contiguous starting from 1.
+    for idx, ev in enumerate(events):
+        assert ev.sequence == idx
+
+    # There should still be real parsed events from the chosen fixture.
+    kinds = [e.kind for e in events[1:]]
+    assert "file_read" in kinds
+    assert "file_edit" in kinds
