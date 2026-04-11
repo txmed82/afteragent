@@ -119,3 +119,28 @@ def test_claude_code_parser_attaches_tool_results_to_tool_events():
     test_run = test_runs[0]
     assert "1 passed" in test_run.output_excerpt
     assert test_run.status == "success"
+
+
+def test_claude_code_parser_handles_ignored_review_fixture():
+    """Verify parsing of a session where the agent edits unrelated files.
+
+    This fixture represents an agent that read and edited /repo/README.md
+    — a file completely unrelated to any failure surface. The parser must
+    correctly extract the read+edit events so sub-project 2's LLM detector
+    can later identify this as an 'ignored review' pattern.
+    """
+    text = (FIXTURES / "ignored_review.jsonl").read_text()
+    events = parse_claude_code_jsonl(run_id="r1", jsonl_text=text)
+
+    reads = [e for e in events if e.kind == KIND_FILE_READ]
+    edits = [e for e in events if e.kind == KIND_FILE_EDIT]
+
+    assert len(reads) == 1
+    assert reads[0].target == "/repo/README.md"
+    assert reads[0].tool_name == "Read"
+    assert "# My Project" in reads[0].output_excerpt
+
+    assert len(edits) == 1
+    assert edits[0].target == "/repo/README.md"
+    assert edits[0].tool_name == "Edit"
+    assert edits[0].status == "success"
