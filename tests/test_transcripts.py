@@ -1,3 +1,8 @@
+import tempfile
+from pathlib import Path
+
+from afteragent.config import resolve_paths
+from afteragent.store import Store
 from afteragent.transcripts import (
     INPUTS_SUMMARY_MAX,
     KIND_ASSISTANT_MESSAGE,
@@ -148,3 +153,81 @@ def test_make_parse_error_truncates_long_messages():
     )
     assert len(event.output_excerpt) == OUTPUT_EXCERPT_MAX
     assert event.output_excerpt.endswith("…")
+
+
+def _make_store(tmp: Path) -> Store:
+    paths = resolve_paths(tmp)
+    return Store(paths)
+
+
+def _make_event(run_id: str, sequence: int, kind: str, target: str) -> TranscriptEvent:
+    return TranscriptEvent(
+        run_id=run_id,
+        sequence=sequence,
+        kind=kind,
+        tool_name="Read" if kind == KIND_FILE_READ else "Edit",
+        target=target,
+        inputs_summary="",
+        output_excerpt="",
+        status="success",
+        source=SOURCE_CLAUDE_CODE_JSONL,
+        timestamp="2026-04-10T12:00:00Z",
+        raw_ref=None,
+    )
+
+
+def test_store_adds_and_retrieves_transcript_events_in_order():
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
+        store = _make_store(tmp)
+        store.create_run("run1", "echo hi", str(tmp), "2026-04-10T12:00:00Z")
+        events = [
+            _make_event("run1", 0, KIND_FILE_READ, "/repo/a.py"),
+            _make_event("run1", 1, KIND_FILE_EDIT, "/repo/a.py"),
+            _make_event("run1", 2, KIND_FILE_READ, "/repo/b.py"),
+        ]
+        store.add_transcript_events("run1", events)
+
+        retrieved = store.get_transcript_events("run1")
+        assert len(retrieved) == 3
+        assert [e["sequence"] for e in retrieved] == [0, 1, 2]
+        assert [e["kind"] for e in retrieved] == [
+            "file_read",
+            "file_edit",
+            "file_read",
+        ]
+        assert retrieved[0]["target"] == "/repo/a.py"
+
+
+def test_store_filters_transcript_events_by_kind():
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
+        store = _make_store(tmp)
+        store.create_run("run1", "echo hi", str(tmp), "2026-04-10T12:00:00Z")
+        events = [
+            _make_event("run1", 0, KIND_FILE_READ, "/repo/a.py"),
+            _make_event("run1", 1, KIND_FILE_EDIT, "/repo/a.py"),
+            _make_event("run1", 2, KIND_FILE_READ, "/repo/b.py"),
+        ]
+        store.add_transcript_events("run1", events)
+
+        reads = store.get_transcript_events("run1", kind="file_read")
+        assert len(reads) == 2
+        assert all(e["kind"] == "file_read" for e in reads)
+
+
+def test_store_returns_empty_list_for_run_with_no_transcript_events():
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
+        store = _make_store(tmp)
+        store.create_run("run1", "echo hi", str(tmp), "2026-04-10T12:00:00Z")
+        assert store.get_transcript_events("run1") == []
+
+
+def test_store_handles_empty_event_list_in_add():
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
+        store = _make_store(tmp)
+        store.create_run("run1", "echo hi", str(tmp), "2026-04-10T12:00:00Z")
+        store.add_transcript_events("run1", [])
+        assert store.get_transcript_events("run1") == []
