@@ -21,7 +21,7 @@ def _make_store(tmp: Path) -> Store:
 
 
 def _seed_run(store: Store, run_id: str = "run1") -> None:
-    store.create_run(run_id, "echo hi", "/tmp", "2026-04-10T12:00:00Z")
+    store.create_run(run_id, "echo hi", tempfile.gettempdir(), "2026-04-10T12:00:00Z")
 
 
 def _seed_diagnosis(
@@ -76,7 +76,7 @@ def _seed_replay(
 ) -> None:
     """Seed a complete replay row + the intervention_sets row it joins against."""
     # Create the replay_run record first.
-    store.create_run(replay_run_id, "echo replay", "/tmp", created_at)
+    store.create_run(replay_run_id, "echo replay", tempfile.gettempdir(), created_at)
     store.finish_run(
         replay_run_id, "passed", 0, created_at, 1000, summary="ok",
     )
@@ -87,7 +87,7 @@ def _seed_replay(
         version=1,
         kind="export",
         created_at=created_at,
-        output_dir="/tmp/exports/fake",
+        output_dir=f"{tempfile.gettempdir()}/exports/fake",
         manifest=manifest,
     )
     # Record the replay row with the comparison payload.
