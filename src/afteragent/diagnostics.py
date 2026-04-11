@@ -128,7 +128,19 @@ def analyze_run(store: Store, run_id: str) -> tuple[list[PatternFinding], list[I
     return findings, interventions
 
 
-def build_interventions(findings: list[PatternFinding]) -> list[Intervention]:
+def build_interventions(
+    findings: list[PatternFinding],
+    llm_interventions: list[Intervention] | None = None,
+) -> list[Intervention]:
+    """Build interventions for a set of findings.
+
+    If llm_interventions is provided and non-empty, use those directly.
+    Otherwise fall back to the hardcoded templates keyed by finding code.
+    Passing an empty list is treated the same as None (fallback) so that
+    callers who got nothing from the LLM still get intervention coverage.
+    """
+    if llm_interventions:
+        return list(llm_interventions)
     interventions: list[Intervention] = []
     codes = {finding.code for finding in findings}
 
