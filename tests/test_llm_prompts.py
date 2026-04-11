@@ -387,3 +387,21 @@ def test_build_diagnosis_prompt_with_effectiveness_respects_token_budget(tmp_pat
     _, user = build_diagnosis_prompt(ctx, effectiveness_report=report)
 
     assert estimate_tokens(user) <= 25_000
+
+
+def test_build_diagnosis_prompt_includes_task_prompt_section_when_set(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    # Update the run's task_prompt so the context loader picks it up.
+    store.set_run_task_prompt("run1", "implement dark mode toggle")
+    ctx = load_diagnosis_context(store, "run1")
+    _, user = build_diagnosis_prompt(ctx)
+    assert "## Task prompt" in user
+    assert "implement dark mode toggle" in user
+
+
+def test_build_diagnosis_prompt_omits_task_prompt_section_when_null(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    # No set_run_task_prompt call — the field is NULL.
+    ctx = load_diagnosis_context(store, "run1")
+    _, user = build_diagnosis_prompt(ctx)
+    assert "## Task prompt" not in user

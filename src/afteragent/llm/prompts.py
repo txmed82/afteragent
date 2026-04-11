@@ -316,6 +316,10 @@ def _build_base_context_block(
     """The context sections shared between both prompts."""
     sections: list[str] = []
 
+    # Task prompt section at the top when available.
+    if context.run.task_prompt:
+        sections.append(f"## Task prompt\n\n{context.run.task_prompt}")
+
     sections.append(
         f"## Run metadata\n"
         f"id: {context.run.id}\n"
