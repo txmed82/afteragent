@@ -50,3 +50,44 @@ class TranscriptEvent:
     status: str = "unknown"
     # ISO-8601 matching models.now_utc() format, or "" if unknown.
     timestamp: str = ""
+
+
+INPUTS_SUMMARY_MAX = 200
+OUTPUT_EXCERPT_MAX = 500
+_ELLIPSIS = "…"
+
+
+def truncate(text: str, max_len: int) -> str:
+    """Return text unchanged if short enough; otherwise clip and append an ellipsis.
+
+    The returned string is guaranteed to be at most max_len characters.
+    A single-character ellipsis is used so the visible length matches max_len.
+    """
+    if len(text) <= max_len:
+        return text
+    if max_len <= 0:
+        return ""
+    return text[: max_len - 1] + _ELLIPSIS
+
+
+def make_parse_error(
+    run_id: str,
+    sequence: int,
+    source: str,
+    message: str,
+    raw_ref: str | None,
+) -> TranscriptEvent:
+    """Construct a parse_error event. The parser's message goes in output_excerpt."""
+    return TranscriptEvent(
+        run_id=run_id,
+        sequence=sequence,
+        kind=KIND_PARSE_ERROR,
+        tool_name=None,
+        target=None,
+        inputs_summary="",
+        output_excerpt=truncate(message, OUTPUT_EXCERPT_MAX),
+        status="error",
+        source=source,
+        timestamp="",
+        raw_ref=raw_ref,
+    )

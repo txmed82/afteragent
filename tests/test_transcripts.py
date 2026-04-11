@@ -81,3 +81,74 @@ def test_source_constants_have_expected_values():
     assert SOURCE_CLAUDE_CODE_JSONL == "claude_code_jsonl"
     assert SOURCE_CODEX_STDOUT == "codex_stdout"
     assert SOURCE_STDOUT_HEURISTIC == "stdout_heuristic"
+
+
+from afteragent.transcripts import (
+    truncate,
+    make_parse_error,
+    INPUTS_SUMMARY_MAX,
+    OUTPUT_EXCERPT_MAX,
+)
+
+
+def test_truncate_leaves_short_text_unchanged():
+    assert truncate("hello world", 20) == "hello world"
+
+
+def test_truncate_clips_long_text_with_ellipsis():
+    text = "a" * 300
+    result = truncate(text, 100)
+    assert len(result) == 100
+    assert result.endswith("…")
+    assert result[:99] == "a" * 99
+
+
+def test_truncate_handles_zero_length_safely():
+    assert truncate("", 100) == ""
+
+
+def test_truncate_handles_exact_length():
+    text = "a" * 100
+    assert truncate(text, 100) == text
+
+
+def test_inputs_summary_max_is_200():
+    assert INPUTS_SUMMARY_MAX == 200
+
+
+def test_output_excerpt_max_is_500():
+    assert OUTPUT_EXCERPT_MAX == 500
+
+
+def test_make_parse_error_fills_all_required_fields():
+    event = make_parse_error(
+        run_id="abc123",
+        sequence=5,
+        source="claude_code_jsonl",
+        message="could not decode JSON on line 42",
+        raw_ref="line:42",
+    )
+    assert event.run_id == "abc123"
+    assert event.sequence == 5
+    assert event.kind == "parse_error"
+    assert event.tool_name is None
+    assert event.target is None
+    assert event.inputs_summary == ""
+    assert event.output_excerpt == "could not decode JSON on line 42"
+    assert event.status == "error"
+    assert event.source == "claude_code_jsonl"
+    assert event.timestamp == ""
+    assert event.raw_ref == "line:42"
+
+
+def test_make_parse_error_truncates_long_messages():
+    long_message = "x" * 1000
+    event = make_parse_error(
+        run_id="abc",
+        sequence=0,
+        source="stdout_heuristic",
+        message=long_message,
+        raw_ref=None,
+    )
+    assert len(event.output_excerpt) == OUTPUT_EXCERPT_MAX
+    assert event.output_excerpt.endswith("…")
