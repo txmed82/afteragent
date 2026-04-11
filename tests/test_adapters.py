@@ -266,5 +266,5 @@ def test_find_candidate_jsonl_picks_closest_to_exit_when_ambiguous(tmp_path: Pat
         exit_time=exit_time,
     )
     # Both are candidates (both post-launch). Expect the one closest to exit.
-    assert chosen in (a, b)
+    assert chosen == b
     assert ambiguous is True

@@ -286,8 +286,12 @@ def claude_project_slug(cwd: Path) -> str:
     Claude Code stores JSONL transcripts under ~/.claude/projects/<slug>/ where
     <slug> is the absolute cwd path with "/" and " " both replaced by "-".
     Other characters are preserved including case.
+
+    Uses Path.absolute() (not resolve()) so symlinks are NOT followed — this
+    matches the path Claude Code itself stores under, which is the literal cwd
+    as seen by the invoking process.
     """
-    s = str(cwd.resolve() if cwd.is_absolute() is False else cwd)
+    s = str(cwd.absolute())
     return s.replace("/", "-").replace(" ", "-")
 
 
