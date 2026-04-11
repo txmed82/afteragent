@@ -45,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Skip LLM enhancement for this run, overriding config.",
     )
+    exec_parser.add_argument(
+        "--task",
+        dest="task_prompt",
+        help="Override the auto-detected task prompt with an explicit string",
+    )
     exec_parser.add_argument("cmd", nargs=argparse.REMAINDER)
 
     subparsers.add_parser("runs", help="List captured runs")
@@ -164,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
                 github_repo=args.github_repo,
                 github_pr=args.github_pr,
                 stream_output=not args.no_stream,
+                task_prompt=getattr(args, "task_prompt", None),  # NEW
             )
         else:
             result = run_command(
@@ -172,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
                 Path.cwd(),
                 summary=args.summary,
                 stream_output=not args.no_stream,
+                task_prompt=getattr(args, "task_prompt", None),  # NEW
             )
         run_id = str(result["run_id"])
         findings, interventions = analyze_run(store, run_id)
