@@ -33,6 +33,9 @@ Homepage = "https://github.com/txmed82/afteragent"
 Repository = "https://github.com/txmed82/afteragent"
 Issues = "https://github.com/txmed82/afteragent/issues"
 
+[project.optional-dependencies]
+dev = ["jsonschema>=4.22"]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
