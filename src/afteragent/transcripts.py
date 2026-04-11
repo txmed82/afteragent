@@ -686,8 +686,26 @@ def parse_codex_stdout(run_id: str, stdout: str, stderr: str) -> list[Transcript
 
 
 def _codex_lookahead(text: str, line_num: int, window: int = 8) -> str:
-    """Return up to `window` non-empty lines after line_num."""
+    """Return up to `window` non-empty lines after line_num, stopping at next command boundary.
+
+    To prevent crossing into later codex command blocks, this function finds the next
+    occurrence of _CODEX_RUN_PATTERN after line_num and limits the lookahead to that boundary.
+    """
     lines = text.splitlines()
     start = line_num  # line_num is 1-indexed; next line is index line_num
-    ahead = [ln for ln in lines[start : start + window] if ln.strip()]
+
+    # Find the next command boundary to avoid crossing into later command blocks
+    next_command_line = None
+    for idx in range(start, len(lines)):
+        if _CODEX_RUN_PATTERN.search(lines[idx]):
+            next_command_line = idx
+            break
+
+    # Determine the end boundary: either next command or start + window
+    if next_command_line is not None:
+        end = min(start + window, next_command_line)
+    else:
+        end = start + window
+
+    ahead = [ln for ln in lines[start:end] if ln.strip()]
     return "\n".join(ahead)
