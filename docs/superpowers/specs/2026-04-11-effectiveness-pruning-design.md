@@ -150,6 +150,9 @@ def _aggregate_finding_metrics(
 **Implementation sketch:**
 
 ```python
+# NOTE: This is pseudocode. Production code for _aggregate_intervention_metrics
+# must perform the join replay_runs.intervention_set_id -> intervention_sets.manifest_json
+# to obtain `manifest` before using it in the loop below.
 def _aggregate_intervention_metrics(
     replay_rows: list[sqlite3.Row],
     min_samples: int,
