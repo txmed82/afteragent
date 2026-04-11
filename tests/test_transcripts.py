@@ -1,21 +1,25 @@
 from afteragent.transcripts import (
-    TranscriptEvent,
-    KIND_FILE_READ,
-    KIND_FILE_EDIT,
-    KIND_BASH_COMMAND,
-    KIND_TEST_RUN,
-    KIND_SEARCH,
-    KIND_WEB_FETCH,
-    KIND_TODO_UPDATE,
-    KIND_SUBAGENT_CALL,
+    INPUTS_SUMMARY_MAX,
     KIND_ASSISTANT_MESSAGE,
-    KIND_USER_MESSAGE,
+    KIND_BASH_COMMAND,
+    KIND_FILE_EDIT,
+    KIND_FILE_READ,
     KIND_HOOK_EVENT,
     KIND_PARSE_ERROR,
+    KIND_SEARCH,
+    KIND_SUBAGENT_CALL,
+    KIND_TEST_RUN,
+    KIND_TODO_UPDATE,
     KIND_UNKNOWN,
+    KIND_USER_MESSAGE,
+    KIND_WEB_FETCH,
+    OUTPUT_EXCERPT_MAX,
     SOURCE_CLAUDE_CODE_JSONL,
     SOURCE_CODEX_STDOUT,
     SOURCE_STDOUT_HEURISTIC,
+    TranscriptEvent,
+    make_parse_error,
+    truncate,
 )
 
 
@@ -81,14 +85,6 @@ def test_source_constants_have_expected_values():
     assert SOURCE_CLAUDE_CODE_JSONL == "claude_code_jsonl"
     assert SOURCE_CODEX_STDOUT == "codex_stdout"
     assert SOURCE_STDOUT_HEURISTIC == "stdout_heuristic"
-
-
-from afteragent.transcripts import (
-    truncate,
-    make_parse_error,
-    INPUTS_SUMMARY_MAX,
-    OUTPUT_EXCERPT_MAX,
-)
 
 
 def test_truncate_leaves_short_text_unchanged():
