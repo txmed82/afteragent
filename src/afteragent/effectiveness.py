@@ -62,41 +62,31 @@ def _aggregate_finding_metrics(
     store: Store,
     min_samples: int,
 ) -> list[EffectivenessMetric]:
-    # total_seen: every time a code appeared in source diagnoses (including
-    # rows with corrupt comparison_json). Used only for the threshold guard so
-    # that one corrupt row cannot suppress a metric that otherwise meets the bar.
-    total_seen: dict[str, int] = {}
-    # valid_samples / success_counts: only rows where comparison parsed cleanly.
-    valid_samples: dict[str, int] = {}
+    sample_counts: dict[str, int] = {}
     success_counts: dict[str, int] = {}
     source_tags: dict[str, set[str]] = {}
 
     for row in replay_rows:
         try:
             comparison = json.loads(row["comparison_json"])
-            resolved_set: set[str] | None = set(comparison.get("resolved_findings") or [])
         except (TypeError, ValueError):
-            resolved_set = None  # corrupt — skip resolution counting but keep seen count
-
+            continue
+        resolved_set = set(comparison.get("resolved_findings") or [])
         try:
             source_findings = store.get_diagnoses(row["source_run_id"])
         except Exception:
             continue
-
         for finding_row in source_findings:
             code = finding_row["code"]
-            total_seen[code] = total_seen.get(code, 0) + 1
+            sample_counts[code] = sample_counts.get(code, 0) + 1
+            if code in resolved_set:
+                success_counts[code] = success_counts.get(code, 0) + 1
             source_tags.setdefault(code, set()).add(finding_row["source"])
-            if resolved_set is not None:
-                valid_samples[code] = valid_samples.get(code, 0) + 1
-                if code in resolved_set:
-                    success_counts[code] = success_counts.get(code, 0) + 1
 
     return _build_metrics(
-        total_seen=total_seen,
-        valid_samples=valid_samples,
-        success_counts=success_counts,
-        source_tags=source_tags,
+        sample_counts,
+        success_counts,
+        source_tags,
         kind="finding_code",
         min_samples=min_samples,
     )
@@ -138,38 +128,27 @@ def _aggregate_intervention_metrics(
             if improved:
                 success_counts[pair] = success_counts.get(pair, 0) + 1
 
-    # For intervention metrics, sample_counts == total_seen (no corrupt-row split needed).
     return _build_metrics(
-        total_seen=sample_counts,
-        valid_samples=sample_counts,
-        success_counts=success_counts,
-        source_tags=source_tags,
+        sample_counts,
+        success_counts,
+        source_tags,
         kind="intervention_type_target",
         min_samples=min_samples,
     )
 
 
 def _build_metrics(
-    total_seen: dict[str, int],
-    valid_samples: dict[str, int],
+    sample_counts: dict[str, int],
     success_counts: dict[str, int],
     source_tags: dict[str, set[str]],
     kind: str,
     min_samples: int,
 ) -> list[EffectivenessMetric]:
-    """Build metrics list.
-
-    The threshold guard uses *total_seen* so that a single corrupt replay row
-    cannot suppress a metric that has otherwise accumulated enough evidence.
-    The reported *samples* value reflects only the rows where the comparison
-    payload parsed successfully (valid_samples), keeping the rate calculation
-    accurate.
-    """
+    """Build metrics list, filtering out any key with fewer than min_samples."""
     metrics: list[EffectivenessMetric] = []
-    for key, seen in total_seen.items():
-        if seen < min_samples:
+    for key, samples in sample_counts.items():
+        if samples < min_samples:
             continue
-        samples = valid_samples.get(key, 0)
         successes = success_counts.get(key, 0)
         tags = source_tags.get(key, set())
         if not tags or len(tags) > 1:

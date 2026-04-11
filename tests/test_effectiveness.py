@@ -398,8 +398,9 @@ def test_sort_order_by_samples_then_rate_then_key():
 def test_skips_corrupt_replay_rows():
     with tempfile.TemporaryDirectory() as tmp_str:
         store = _make_store(Path(tmp_str))
-        # Seed 5 valid replays.
-        for i in range(5):
+        # Seed 6 valid replays (1 more than the default threshold of 5
+        # so that after corrupting one row, we still have 5 clean samples).
+        for i in range(6):
             source_id = f"src{i}"
             replay_id = f"rep{i}"
             _seed_run(store, source_id)
@@ -420,12 +421,13 @@ def test_skips_corrupt_replay_rows():
             )
 
         report = compute_effectiveness_metrics(store)
-        # Should not raise. The corrupt row contributes nothing.
-        assert report.total_replays == 5
-        # The valid 4 replays still produce the code metric.
+        # total_replays counts all table rows, including the corrupt one.
+        assert report.total_replays == 6
+        # The metric is computed from the 5 clean rows only.
         metrics_for_x = [m for m in report.finding_metrics if m.key == "code_x"]
         assert len(metrics_for_x) == 1
-        assert metrics_for_x[0].samples == 4
+        assert metrics_for_x[0].samples == 5
+        assert metrics_for_x[0].successes == 5
 
 
 def test_handles_deleted_source_run():
