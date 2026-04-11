@@ -2,7 +2,14 @@ import tempfile
 from pathlib import Path
 
 from afteragent.config import resolve_paths
-from afteragent.llm.prompts import DiagnosisContext, load_diagnosis_context
+from afteragent.llm.prompts import (
+    DiagnosisContext,
+    MergedFinding,
+    build_diagnosis_prompt,
+    build_interventions_prompt,
+    estimate_tokens,
+    load_diagnosis_context,
+)
 from afteragent.models import PatternFinding
 from afteragent.store import Store
 
@@ -160,3 +167,136 @@ def test_load_diagnosis_context_rejects_unknown_run(tmp_path):
     store = Store(resolve_paths(tmp_path))
     with _pytest.raises(ValueError, match="Run not found"):
         load_diagnosis_context(store, "does-not-exist")
+
+
+def test_estimate_tokens_is_proportional_to_character_count():
+    assert 80 <= estimate_tokens("x" * 400) <= 120
+
+
+def test_build_diagnosis_prompt_returns_system_and_user_strings(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    ctx = load_diagnosis_context(store, "run1")
+
+    system, user = build_diagnosis_prompt(ctx)
+
+    assert isinstance(system, str) and isinstance(user, str)
+    assert "diagnostician" in system.lower()
+    assert ctx.run.id in user or ctx.run.command in user
+
+
+def test_build_diagnosis_prompt_includes_rule_findings_section_when_present(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    store.replace_diagnosis(
+        "run1",
+        [{
+            "run_id": "run1",
+            "code": "seed_finding",
+            "title": "Seeded for test",
+            "severity": "medium",
+            "summary": "a rule was confused",
+            "evidence_json": '["hint1", "hint2"]',
+        }],
+        [],
+    )
+    ctx = load_diagnosis_context(store, "run1")
+    _, user = build_diagnosis_prompt(ctx)
+    assert "seed_finding" in user
+    assert "Seeded for test" in user
+
+
+def test_build_diagnosis_prompt_omits_rule_findings_section_when_empty(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    ctx = load_diagnosis_context(store, "run1")
+    _, user = build_diagnosis_prompt(ctx)
+    # When empty, the section either shows "(none)" or is absent.
+    assert "## Rule-based findings" not in user or "(none)" in user
+
+
+def test_build_diagnosis_prompt_includes_transcript_events_when_present(tmp_path):
+    from afteragent.transcripts import (
+        KIND_FILE_READ,
+        SOURCE_CLAUDE_CODE_JSONL,
+        TranscriptEvent,
+    )
+
+    store = _seed_run_with_artifacts(tmp_path)
+    store.add_transcript_events("run1", [
+        TranscriptEvent(
+            run_id="run1",
+            sequence=0,
+            kind=KIND_FILE_READ,
+            tool_name="Read",
+            target="/repo/foo.py",
+            source=SOURCE_CLAUDE_CODE_JSONL,
+            raw_ref="line:10",
+            timestamp="2026-04-10T12:00:01Z",
+        ),
+    ])
+    ctx = load_diagnosis_context(store, "run1")
+    _, user = build_diagnosis_prompt(ctx)
+    assert "/repo/foo.py" in user
+    assert "file_read" in user
+
+
+def test_build_diagnosis_prompt_respects_token_budget(tmp_path):
+    store = Store(resolve_paths(tmp_path))
+    store.create_run("run1", "cmd", str(tmp_path), "2026-04-10T12:00:00Z")
+    artifact_dir = store.run_artifact_dir("run1")
+    (artifact_dir / "stdout.log").write_text("")
+    (artifact_dir / "stderr.log").write_text("")
+    (artifact_dir / "git_diff_before.patch").write_text("")
+    (artifact_dir / "git_diff_after.patch").write_text("")
+    store.finish_run("run1", "passed", 0, "2026-04-10T12:00:01Z", 1000, "ok")
+
+    from afteragent.transcripts import KIND_BASH_COMMAND, SOURCE_CLAUDE_CODE_JSONL, TranscriptEvent
+    events = [
+        TranscriptEvent(
+            run_id="run1",
+            sequence=i,
+            kind=KIND_BASH_COMMAND,
+            tool_name="Bash",
+            target=f"some-long-command-with-lots-of-context-{i} " + ("x" * 100),
+            source=SOURCE_CLAUDE_CODE_JSONL,
+            raw_ref=f"line:{i}",
+            inputs_summary="x" * 150,
+            output_excerpt="x" * 200,
+            timestamp="2026-04-10T12:00:00Z",
+        )
+        for i in range(500)
+    ]
+    store.add_transcript_events("run1", events)
+
+    ctx = load_diagnosis_context(store, "run1")
+    _, user = build_diagnosis_prompt(ctx)
+
+    assert estimate_tokens(user) <= 25_000
+
+
+def test_build_interventions_prompt_includes_merged_findings(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    ctx = load_diagnosis_context(store, "run1")
+
+    merged = [
+        MergedFinding(
+            code="novel_loop",
+            title="Agent in edit loop",
+            severity="high",
+            summary="edited same file 4 times",
+            evidence=["foo.py edited at t=0", "foo.py edited at t=10"],
+            source="llm",
+        )
+    ]
+
+    system, user = build_interventions_prompt(ctx, merged)
+    assert "author" in system.lower() and "intervention" in system.lower()
+    assert "novel_loop" in user
+    assert "Agent in edit loop" in user
+
+
+def test_build_interventions_prompt_handles_empty_merged_findings(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    ctx = load_diagnosis_context(store, "run1")
+
+    system, user = build_interventions_prompt(ctx, [])
+    assert isinstance(system, str) and isinstance(user, str)
+    assert len(system) > 0 and len(user) > 0
