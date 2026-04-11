@@ -26,7 +26,7 @@ def test_generic_parser_detects_pytest_run_as_test_run():
     first = test_events[0]
     assert first.source == SOURCE_STDOUT_HEURISTIC
     assert first.status == "error"  # pytest output contains "FAILED" and "1 failed"
-    assert first.sequence == 0 or first.sequence >= 0  # monotonic
+    assert first.sequence == 0
 
 
 def test_generic_parser_assigns_monotonic_sequences():

@@ -113,7 +113,7 @@ _TEST_FAILURE_PATTERNS = (
     re.compile(r"\bfailed\b", re.I),
     re.compile(r"\bassertion\s*error\b", re.I),
     re.compile(r"\btraceback\b", re.I),
-    re.compile(r"^\s*FAIL\s", re.I),
+    re.compile(r"^\s*FAIL\s", re.I | re.MULTILINE),
 )
 
 _SUCCESS_PATTERNS = (
