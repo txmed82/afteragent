@@ -235,14 +235,20 @@ def test_enhance_findings_call_failure_preserves_rule_findings(tmp_path):
     })
 
     result = enhance_diagnosis_with_llm(store, "run1", client, _make_config())
-    assert result.status == "error"
+    # Status should be "partial" because interventions call succeeded
+    assert result.status == "partial"
 
     diagnoses = store.get_diagnoses("run1")
+    # Rule finding should be preserved
     assert any(d["code"] == "preserve_me" and d["source"] == "rule" for d in diagnoses)
+    # diagnosis_error finding should be emitted
+    assert any(d["code"] == "diagnosis_error" and d["source"] == "llm" and d["severity"] == "low" for d in diagnoses)
 
     gens = store.get_llm_generations("run1")
-    assert len(gens) >= 1
+    # Both calls should have generation rows
+    assert len(gens) == 2
     assert any(g["kind"] == "findings" and g["status"] == "error" for g in gens)
+    assert any(g["kind"] == "interventions" and g["status"] == "success" for g in gens)
 
 
 def test_enhance_interventions_call_failure_persists_merged_findings(tmp_path):

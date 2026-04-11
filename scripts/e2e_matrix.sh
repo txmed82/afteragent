@@ -34,4 +34,5 @@ python3 -m pytest -v \
     tests/test_llm_merge.py \
     tests/test_llm_enhancer.py \
     tests/test_store_llm.py \
-    tests/test_diagnostics_llm_hook.py
+    tests/test_diagnostics_llm_hook.py \
+    tests/test_cli.py

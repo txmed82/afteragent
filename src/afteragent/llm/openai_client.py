@@ -27,9 +27,9 @@ class OpenAICompatClient:
 
         api_key = config.api_key or _OLLAMA_PLACEHOLDER_KEY
         if config.base_url is not None:
-            self._sdk = openai.OpenAI(api_key=api_key, base_url=config.base_url)
+            self._sdk = openai.OpenAI(api_key=api_key, base_url=config.base_url, timeout=config.timeout_s)
         else:
-            self._sdk = openai.OpenAI(api_key=api_key)
+            self._sdk = openai.OpenAI(api_key=api_key, timeout=config.timeout_s)
 
     def call_structured(
         self,

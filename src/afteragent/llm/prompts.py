@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from ..models import PatternFinding, RunRecord, TranscriptEventRow
 from ..store import Store
@@ -108,7 +109,9 @@ def _head_and_tail(
 ) -> tuple[str, str]:
     lines = text.splitlines()
     head = "\n".join(lines[:head_lines])
-    tail = "\n".join(lines[-tail_lines:]) if len(lines) > head_lines else ""
+    # Prevent overlap: tail starts at max(head_lines, len(lines) - tail_lines)
+    tail_start = max(head_lines, len(lines) - tail_lines)
+    tail = "\n".join(lines[tail_start:]) if len(lines) > head_lines else ""
     if len(head) > head_char_cap:
         head = head[: head_char_cap - 1] + "\u2026"
     if len(tail) > tail_char_cap:
@@ -246,8 +249,11 @@ Output via the `author_interventions` tool."""
 
 def build_diagnosis_prompt(context: DiagnosisContext) -> tuple[str, str]:
     """Build (system, user) strings for the findings call."""
-    user = _build_base_context_block(context, include_findings_header="Rule-based findings")
-    user = _enforce_token_budget(user, context)
+    def rebuild_diagnosis(ctx: DiagnosisContext) -> str:
+        return _build_base_context_block(ctx, include_findings_header="Rule-based findings")
+
+    user = rebuild_diagnosis(context)
+    user = _enforce_token_budget(user, context, rebuild_diagnosis)
     return (_DIAGNOSIS_SYSTEM_PROMPT, user)
 
 
@@ -256,28 +262,29 @@ def build_interventions_prompt(
     merged_findings: list[MergedFinding],
 ) -> tuple[str, str]:
     """Build (system, user) strings for the interventions call."""
-    base = _build_base_context_block(context, include_findings_header=None)
+    def rebuild_interventions(ctx: DiagnosisContext) -> str:
+        base = _build_base_context_block(ctx, include_findings_header=None)
+        if merged_findings:
+            findings_section = "## Confirmed findings to address\n\n" + json.dumps(
+                [
+                    {
+                        "code": f.code,
+                        "title": f.title,
+                        "severity": f.severity,
+                        "summary": f.summary,
+                        "evidence": f.evidence,
+                        "source": f.source,
+                    }
+                    for f in merged_findings
+                ],
+                indent=2,
+            )
+        else:
+            findings_section = "## Confirmed findings to address\n\n(none)"
+        return f"{findings_section}\n\n{base}"
 
-    if merged_findings:
-        findings_section = "## Confirmed findings to address\n\n" + json.dumps(
-            [
-                {
-                    "code": f.code,
-                    "title": f.title,
-                    "severity": f.severity,
-                    "summary": f.summary,
-                    "evidence": f.evidence,
-                    "source": f.source,
-                }
-                for f in merged_findings
-            ],
-            indent=2,
-        )
-    else:
-        findings_section = "## Confirmed findings to address\n\n(none)"
-
-    user = f"{findings_section}\n\n{base}"
-    user = _enforce_token_budget(user, context)
+    user = rebuild_interventions(context)
+    user = _enforce_token_budget(user, context, rebuild_interventions)
     return (_INTERVENTIONS_SYSTEM_PROMPT, user)
 
 
@@ -378,11 +385,17 @@ def _build_base_context_block(
     return "\n\n".join(sections)
 
 
-def _enforce_token_budget(user: str, context: DiagnosisContext) -> str:
+def _enforce_token_budget(
+    user: str,
+    context: DiagnosisContext,
+    rebuild_prompt: Callable[[DiagnosisContext], str],
+) -> str:
     """Trim the user prompt to fit under MAX_INPUT_TOKENS.
 
     Strategy: if over budget, trim the transcript events section first
     (usually the biggest), then hard-clip the whole prompt as a fallback.
+    The rebuild_prompt callback is used to re-render the exact same prompt
+    shape against a trimmed DiagnosisContext.
     """
     if estimate_tokens(user) <= MAX_INPUT_TOKENS:
         return user
@@ -401,7 +414,7 @@ def _enforce_token_budget(user: str, context: DiagnosisContext) -> str:
             changed_files=context.changed_files,
             github_summary=context.github_summary,
         )
-        user = _build_base_context_block(trimmed_ctx, include_findings_header="Rule-based findings")
+        user = rebuild_prompt(trimmed_ctx)
         if estimate_tokens(user) <= MAX_INPUT_TOKENS:
             return user + "\n\n[transcript events trimmed to first+last 50 of ~{} total]".format(
                 len(context.transcript_events)

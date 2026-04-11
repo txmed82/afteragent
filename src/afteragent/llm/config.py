@@ -73,14 +73,23 @@ def load_config(
         if base_url is None:
             base_url = default_base_url
 
+    # Normalize provider: trim and lowercase
+    if provider is not None:
+        provider = provider.strip().lower()
+        # Validate provider is in canonical set
+        canonical_providers = set(_AUTODETECT_DEFAULTS.keys()) | set(_API_KEY_ENV.keys())
+        if not provider or provider not in canonical_providers:
+            return None
+
     # Step 4: fill in a default base_url for providers that need one.
     if base_url is None and provider == "openrouter":
         base_url = _AUTODETECT_DEFAULTS["openrouter"][1]
     if provider == "ollama":
         env_ollama_url = os.environ.get("OLLAMA_BASE_URL")
+        # Prefer explicit base_url, then env var, then default
         base_url = (
-            env_ollama_url
-            or base_url
+            base_url
+            or env_ollama_url
             or _OLLAMA_DEFAULT_BASE_URL
         )
 

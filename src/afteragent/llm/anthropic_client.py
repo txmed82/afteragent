@@ -19,7 +19,7 @@ class AnthropicClient:
         import anthropic  # Lazy import — only happens when this class is instantiated.
 
         self._config = config
-        self._sdk = anthropic.Anthropic(api_key=config.api_key)
+        self._sdk = anthropic.Anthropic(api_key=config.api_key, timeout=config.timeout_s)
         self.model = config.model
 
     def call_structured(
@@ -34,6 +34,7 @@ class AnthropicClient:
             model=self.model,
             max_tokens=self._config.max_tokens,
             temperature=self._config.temperature,
+            timeout=self._config.timeout_s,
             system=system,
             messages=[{"role": "user", "content": user}],
             tools=[

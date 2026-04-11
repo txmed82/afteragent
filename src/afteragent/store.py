@@ -481,7 +481,7 @@ class Store:
                        created_at, raw_response_excerpt
                 FROM llm_generations
                 WHERE run_id = ?
-                ORDER BY id ASC
+                ORDER BY created_at ASC, id ASC
                 """,
                 (run_id,),
             ).fetchall()

@@ -47,11 +47,25 @@ def enhance_diagnosis_with_llm(
     findings_count = 0
     interventions_count = 0
 
-    context = load_diagnosis_context(store, run_id)
+    try:
+        context = load_diagnosis_context(store, run_id)
+    except Exception as exc:
+        errors.append(f"failed to load diagnosis context: {exc}")
+        return EnhanceResult(
+            status="error",
+            findings_count=0,
+            interventions_count=0,
+            total_input_tokens=0,
+            total_output_tokens=0,
+            total_cost_usd=0.0,
+            error_messages=errors,
+        )
 
     # ----- Findings call -----
     system, user = build_diagnosis_prompt(context)
     merged: list[MergedFinding] | None = None
+    findings_succeeded = False
+    llm_findings_raw: list[dict] = []
     try:
         response = client.call_structured(
             system=system,
@@ -74,9 +88,10 @@ def enhance_diagnosis_with_llm(
             response.provider, response.model, response.input_tokens, response.output_tokens
         )
 
-        llm_findings = response.data.get("findings", [])
-        merged = merge_findings(context.rule_findings, llm_findings)
+        llm_findings_raw = response.data.get("findings", [])
+        merged = merge_findings(context.rule_findings, llm_findings_raw)
         findings_count = len(merged)
+        findings_succeeded = True
 
     except Exception as exc:
         errors.append(f"findings call failed: {exc}")
@@ -89,19 +104,36 @@ def enhance_diagnosis_with_llm(
             error_message=str(exc),
             config=config,
         )
-        return EnhanceResult(
-            status="error",
-            findings_count=0,
-            interventions_count=0,
-            total_input_tokens=total_in,
-            total_output_tokens=total_out,
-            total_cost_usd=total_cost,
-            error_messages=errors,
+        # Emit diagnosis_error finding and preserve rule-based findings
+        # Create merged list from rule findings plus the diagnosis_error finding
+        merged = [
+            MergedFinding(
+                code=r.code,
+                title=r.title,
+                severity=r.severity,
+                summary=r.summary,
+                evidence=list(r.evidence),
+                source="rule",
+            )
+            for r in context.rule_findings
+        ]
+        # Add diagnosis_error finding
+        merged.append(
+            MergedFinding(
+                code="diagnosis_error",
+                title="LLM diagnosis call failed",
+                severity="low",
+                summary=f"LLM findings call failed: {exc}",
+                evidence=[],
+                source="llm",
+            )
         )
+        findings_count = len(merged)
 
     # ----- Interventions call -----
     system, user = build_interventions_prompt(context, merged)
     llm_interventions: list[dict] = []
+    interventions_succeeded = False
     try:
         response = client.call_structured(
             system=system,
@@ -125,6 +157,7 @@ def enhance_diagnosis_with_llm(
         )
         llm_interventions = response.data.get("interventions", [])
         interventions_count = len(llm_interventions)
+        interventions_succeeded = True
     except Exception as exc:
         errors.append(f"interventions call failed: {exc}")
         _record_error_generation(
@@ -136,22 +169,24 @@ def enhance_diagnosis_with_llm(
             error_message=str(exc),
             config=config,
         )
+        # Fall back to empty interventions (hardcoded interventions would be handled by caller)
+        interventions_count = 0
 
     # ----- Persist -----
     # Rule findings that the LLM confirmed (overriding with its own version) or
     # rejected must be removed from the store so the LLM version (or nothing)
     # is the single authoritative row after this pass.
-    rule_codes_to_remove = [
-        f.code
-        for f in merged
-        if f.source == "llm"
-        and any(r.code == f.code for r in context.rule_findings)
-    ]
-    # Also gather rejected rule codes (dropped from merged entirely).
-    merged_codes = {f.code for f in merged}
-    for rule in context.rule_findings:
-        if rule.code not in merged_codes:
-            rule_codes_to_remove.append(rule.code)
+    # Only remove rules that were explicitly referenced by the LLM via rule_code_ref.
+    rule_codes_to_remove: list[str] = []
+    if findings_succeeded and llm_findings_raw:
+        referenced_rule_codes = set()
+        for llm_f in llm_findings_raw:
+            rule_code_ref = llm_f.get("rule_code_ref")
+            if rule_code_ref and llm_f.get("origin") in ("confirmed_rule", "rejected_rule"):
+                referenced_rule_codes.add(rule_code_ref)
+
+        # Remove rules that were explicitly referenced (confirmed or rejected)
+        rule_codes_to_remove = list(referenced_rule_codes)
 
     store.replace_llm_diagnosis(
         run_id=run_id,
@@ -164,7 +199,13 @@ def enhance_diagnosis_with_llm(
         rule_codes_to_remove=rule_codes_to_remove,
     )
 
-    status = "success" if not errors else ("partial" if merged else "error")
+    # Compute status based on success flags, not merged truthiness
+    if not errors:
+        status = "success"
+    elif findings_succeeded or interventions_succeeded:
+        status = "partial"
+    else:
+        status = "error"
     return EnhanceResult(
         status=status,
         findings_count=findings_count,
