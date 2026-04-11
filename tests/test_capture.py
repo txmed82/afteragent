@@ -1,11 +1,13 @@
 import io
+import os
 import stat
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from afteragent.adapters import CodexAdapter, RunnerAdapter
+from afteragent.adapters import ClaudeCodeAdapter, CodexAdapter, RunnerAdapter, claude_project_slug
 from afteragent.capture import run_command, validate_github_pr
 from afteragent.config import AppPaths, resolve_paths
 from afteragent.store import Store
@@ -238,6 +240,64 @@ def test_run_command_precreates_transcripts_artifact_subdir(tmp_path: Path):
     # have written into it. The parser returned [] so nothing was actually
     # written, but the directory must exist.
     assert subdir_seen[0].exists()
+
+
+def test_capture_full_pipeline_with_real_claude_code_adapter(tmp_path: Path, monkeypatch):
+    """Exercises snapshot → subprocess → parse → store with a real ClaudeCodeAdapter.
+
+    Uses a fake ~/.claude/projects/<slug>/ layout. The subprocess writes the
+    fixture JSONL into the project dir (simulating Claude Code writing its
+    transcript during the run), and monkeypatch HOME so the adapter looks at
+    our fake dir.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    slug = claude_project_slug(repo)
+    project_dir = fake_home / ".claude" / "projects" / slug
+    project_dir.mkdir(parents=True)
+
+    # Path the subprocess will write the transcript to.
+    fixture = Path(__file__).parent / "fixtures" / "transcripts" / "claude_code" / "simple_edit_run.jsonl"
+    session_path = project_dir / "sess-simple.jsonl"
+
+    # The subprocess copies the fixture JSONL into the project dir, simulating
+    # Claude Code writing its transcript during the run.  Because the file does
+    # not exist when pre_launch_snapshot runs, find_candidate_jsonl treats it
+    # as a brand-new file (not in pre_jsonl_files) and always picks it up.
+    write_cmd = (
+        f"import shutil; shutil.copy({str(fixture)!r}, {str(session_path)!r})"
+    )
+
+    adapter = ClaudeCodeAdapter()
+    store = Store(resolve_paths(tmp_path / "afteragent-root"))
+
+    result = run_command(
+        store=store,
+        command=["python3", "-c", write_cmd],
+        cwd=repo,
+        adapter=adapter,
+    )
+    run_id = result["run_id"]
+
+    rows = store.get_transcript_events(run_id)
+    assert len(rows) > 0
+    # All non-parse-error events should be tagged with the Claude Code source.
+    non_errors = [r for r in rows if r["kind"] != "parse_error"]
+    assert all(r["source"] == "claude_code_jsonl" for r in non_errors)
+
+    # Kind coverage: we expect at least one file_read and one file_edit
+    # from the fixture.
+    kinds = {r["kind"] for r in rows}
+    assert "file_read" in kinds
+    assert "file_edit" in kinds
+
+    # Raw transcript was copied into the artifact dir.
+    artifacts_root = store.paths.artifacts_dir / run_id / "transcripts"
+    assert (artifacts_root / "session.jsonl").exists()
 
 
 def make_paths(root: Path) -> AppPaths:
