@@ -77,13 +77,12 @@ def load_config(
     if base_url is None and provider == "openrouter":
         base_url = _AUTODETECT_DEFAULTS["openrouter"][1]
     if provider == "ollama":
+        env_ollama_url = os.environ.get("OLLAMA_BASE_URL")
         base_url = (
-            base_url
-            or os.environ.get("OLLAMA_BASE_URL")
+            env_ollama_url
+            or base_url
             or _OLLAMA_DEFAULT_BASE_URL
         )
-    if provider == "ollama" and os.environ.get("OLLAMA_BASE_URL"):
-        base_url = os.environ["OLLAMA_BASE_URL"]
 
     # Step 5: resolve api_key. Ollama does not require one.
     api_key: str | None = None

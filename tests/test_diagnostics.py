@@ -72,6 +72,7 @@ diff --git a/a.py b/a.py
                 exports_dir=root / "exports",
                 applied_dir=root / "applied",
                 replays_dir=root / "replays",
+                config_path=root / "config.toml",
             )
             store = Store(paths)
 
@@ -198,6 +199,7 @@ diff --git a/a.py b/a.py
                 exports_dir=root / "exports",
                 applied_dir=root / "applied",
                 replays_dir=root / "replays",
+                config_path=root / "config.toml",
             )
             store = Store(paths)
 

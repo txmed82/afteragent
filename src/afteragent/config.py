@@ -12,7 +12,7 @@ class AppPaths:
     exports_dir: Path
     applied_dir: Path
     replays_dir: Path
-    config_path: Path = Path()
+    config_path: Path
 
 
 def resolve_paths(base_dir: Path | None = None) -> AppPaths:
