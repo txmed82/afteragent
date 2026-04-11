@@ -154,7 +154,22 @@ def parse_generic_stdout(
     try:
         is_test_run = any(p.search(combined) for p in _TEST_RUNNER_PATTERNS)
         if is_test_run:
-            has_failure = any(p.search(combined) for p in _TEST_FAILURE_PATTERNS)
+            # First check for explicit numeric failure counts (e.g., "N failed")
+            has_failure = False
+            found_numeric_count = False
+            for match in _FAILED_COUNT_PATTERN.finditer(combined):
+                found_numeric_count = True
+                try:
+                    if int(match.group(1)) > 0:
+                        has_failure = True
+                        break
+                except (TypeError, ValueError):
+                    continue
+
+            # Only use generic failure patterns if no numeric count was found
+            if not found_numeric_count:
+                has_failure = any(p.search(combined) for p in _TEST_FAILURE_PATTERNS)
+
             events.append(
                 TranscriptEvent(
                     run_id=run_id,
@@ -518,6 +533,8 @@ _CODEX_RUN_PATTERN = re.compile(
 
 # Detect "N failed" where N > 0. Captures the integer so callers can verify.
 _FAILED_COUNT_PATTERN = re.compile(r"\b(\d+)\s+failed\b", re.I)
+# Detect "N error(s)" where N > 0. Captures the integer so callers can verify.
+_ERROR_COUNT_PATTERN = re.compile(r"\b(\d+)\s+errors?\b", re.I)
 # Standalone failure tokens that are NOT part of a "0 failed" summary. Word
 # boundaries prevent matching inside other words; uppercase-only to allow
 # callers to `.upper()` the lookahead once.
@@ -533,19 +550,38 @@ def _codex_lookahead_is_error(lookahead: str) -> bool:
     """
     # First: is there an explicit "N failed" count? That's the authoritative
     # signal for test-runner output.
-    has_count = False
+    has_failed_count = False
+    failed_count = 0
     for match in _FAILED_COUNT_PATTERN.finditer(lookahead):
-        has_count = True
+        has_failed_count = True
         try:
-            if int(match.group(1)) > 0:
+            count = int(match.group(1))
+            if count > 0:
                 return True
+            failed_count = max(failed_count, count)
         except (TypeError, ValueError):
             continue
-    # If we saw at least one "N failed" and none of them were > 0, the output
-    # is affirmatively a passing test summary — don't let a bare "FAIL" word
-    # elsewhere flip it.
-    if has_count:
-        return False
+
+    # Check for "N error(s)" counts as well
+    has_error_count = False
+    error_count = 0
+    for match in _ERROR_COUNT_PATTERN.finditer(lookahead):
+        has_error_count = True
+        try:
+            count = int(match.group(1))
+            if count > 0:
+                return True
+            error_count = max(error_count, count)
+        except (TypeError, ValueError):
+            continue
+
+    # If we saw at least one count pattern (failed or error) and all of them
+    # were 0, the output is affirmatively a passing test summary — don't let
+    # a bare "FAIL" word elsewhere flip it.
+    if has_failed_count or has_error_count:
+        # Only suppress if ALL counts are zero
+        if failed_count == 0 and error_count == 0:
+            return False
 
     # Fallback: standalone FAIL/FAILED/ERROR tokens anywhere in the lookahead.
     upper = lookahead.upper()
