@@ -167,3 +167,88 @@ def _build_metrics(
             )
         )
     return metrics
+
+
+_PROMPT_MAX_ROWS = 10
+
+
+def format_metrics_for_prompt(
+    report: EffectivenessReport,
+    section: str,
+) -> str:
+    """Compact text block for prompt injection. Returns an empty string when
+    no metrics qualify so callers can skip the section cleanly.
+    """
+    if section == "findings":
+        metrics = report.finding_metrics
+        header = "## Historical effectiveness (finding codes)"
+        row_label = "code"
+    elif section == "interventions":
+        metrics = report.intervention_metrics
+        header = "## Historical effectiveness (intervention type/target)"
+        row_label = "pair"
+    else:
+        raise ValueError(f"Unknown section: {section!r}")
+
+    if not metrics:
+        return ""
+
+    top = metrics[:_PROMPT_MAX_ROWS]
+    lines = [
+        header,
+        "",
+        f"Based on {report.total_replays} prior replays. Only entries with "
+        f"{report.min_samples_threshold}+ samples are shown.",
+        "",
+    ]
+    for m in top:
+        pct = int(round(m.success_rate * 100))
+        lines.append(
+            f"- {row_label}={m.key} — {pct}% "
+            f"({m.successes}/{m.samples}, source={m.source})"
+        )
+    lines.append("")
+    lines.append(
+        "Use this data as evidence when deciding whether to confirm, reject, "
+        "or supplement rule-based findings. Low historical rates suggest the "
+        "code or intervention pattern is unreliable — consider alternatives."
+    )
+    return "\n".join(lines)
+
+
+def format_metrics_for_cli(report: EffectivenessReport) -> str:
+    """Terminal-friendly table."""
+    lines = [
+        f"AfterAgent effectiveness ({report.total_replays} total replays, "
+        f"min_samples={report.min_samples_threshold})",
+        "",
+    ]
+
+    if report.total_replays == 0:
+        lines.append("No replays recorded yet.")
+        return "\n".join(lines)
+
+    lines.append("Finding code resolution rates:")
+    if not report.finding_metrics:
+        lines.append(f"  (no codes with \u2265{report.min_samples_threshold} samples)")
+    else:
+        for m in report.finding_metrics:
+            pct = int(round(m.success_rate * 100))
+            lines.append(
+                f"  {m.key:<48s} {pct:>3d}% "
+                f"({m.successes}/{m.samples}, source={m.source})"
+            )
+
+    lines.append("")
+    lines.append("Intervention (type/target) win rates:")
+    if not report.intervention_metrics:
+        lines.append(f"  (no pairs with \u2265{report.min_samples_threshold} samples)")
+    else:
+        for m in report.intervention_metrics:
+            pct = int(round(m.success_rate * 100))
+            lines.append(
+                f"  {m.key:<48s} {pct:>3d}% "
+                f"({m.successes}/{m.samples}, source={m.source})"
+            )
+
+    return "\n".join(lines)

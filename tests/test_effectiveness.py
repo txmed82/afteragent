@@ -10,6 +10,8 @@ from afteragent.effectiveness import (
     EffectivenessMetric,
     EffectivenessReport,
     compute_effectiveness_metrics,
+    format_metrics_for_cli,
+    format_metrics_for_prompt,
 )
 from afteragent.store import Store
 
@@ -487,3 +489,143 @@ def test_handles_deleted_source_run():
         assert intervention_metric.samples == 5
         # Finding metrics are empty because no source run had diagnoses.
         assert report.finding_metrics == []
+
+
+def _build_report(
+    total_replays: int = 5,
+    min_samples_threshold: int = 5,
+    finding_metrics: list[EffectivenessMetric] | None = None,
+    intervention_metrics: list[EffectivenessMetric] | None = None,
+) -> EffectivenessReport:
+    return EffectivenessReport(
+        total_replays=total_replays,
+        min_samples_threshold=min_samples_threshold,
+        finding_metrics=finding_metrics or [],
+        intervention_metrics=intervention_metrics or [],
+        generated_at="2026-04-11T12:00:00Z",
+    )
+
+
+def test_format_for_prompt_empty_report_returns_empty_string():
+    report = _build_report(total_replays=0)
+    assert format_metrics_for_prompt(report, section="findings") == ""
+    assert format_metrics_for_prompt(report, section="interventions") == ""
+
+
+def test_format_for_prompt_findings_section_shape():
+    metrics = [
+        EffectivenessMetric(
+            key="low_diff_overlap",
+            kind="finding_code",
+            source="rule",
+            samples=10,
+            successes=8,
+            success_rate=0.8,
+        ),
+    ]
+    report = _build_report(total_replays=10, finding_metrics=metrics)
+    output = format_metrics_for_prompt(report, section="findings")
+    assert "## Historical effectiveness (finding codes)" in output
+    assert "code=low_diff_overlap" in output
+    assert "80%" in output
+    assert "(8/10, source=rule)" in output
+    assert "Based on 10 prior replays" in output
+
+
+def test_format_for_prompt_interventions_section_shape():
+    metrics = [
+        EffectivenessMetric(
+            key="prompt_patch/task_prompt",
+            kind="intervention_type_target",
+            source="mixed",
+            samples=12,
+            successes=9,
+            success_rate=0.75,
+        ),
+    ]
+    report = _build_report(total_replays=12, intervention_metrics=metrics)
+    output = format_metrics_for_prompt(report, section="interventions")
+    assert "## Historical effectiveness (intervention type/target)" in output
+    assert "pair=prompt_patch/task_prompt" in output
+    assert "75%" in output
+    assert "source=mixed" in output
+
+
+def test_format_for_prompt_caps_at_max_rows():
+    metrics = [
+        EffectivenessMetric(
+            key=f"code_{i}",
+            kind="finding_code",
+            source="rule",
+            samples=20 - i,
+            successes=10,
+            success_rate=10 / (20 - i),
+        )
+        for i in range(15)
+    ]
+    report = _build_report(total_replays=20, finding_metrics=metrics)
+    output = format_metrics_for_prompt(report, section="findings")
+    # Only the first 10 metrics should appear.
+    assert "code=code_0" in output
+    assert "code=code_9" in output
+    assert "code=code_10" not in output
+    assert "code=code_14" not in output
+
+
+def test_format_for_prompt_rejects_unknown_section_name():
+    report = _build_report()
+    with pytest.raises(ValueError, match="Unknown section"):
+        format_metrics_for_prompt(report, section="garbage")
+
+
+def test_format_for_cli_empty_store():
+    report = _build_report(total_replays=0)
+    output = format_metrics_for_cli(report)
+    assert "No replays recorded yet." in output
+    assert "0 total replays" in output
+
+
+def test_format_for_cli_below_threshold():
+    report = _build_report(total_replays=3)  # metrics lists empty
+    output = format_metrics_for_cli(report)
+    assert "3 total replays" in output
+    assert "(no codes with ≥5 samples)" in output
+    assert "(no pairs with ≥5 samples)" in output
+
+
+def test_format_for_cli_populated():
+    finding_metrics = [
+        EffectivenessMetric(
+            key="low_diff_overlap_with_failing_files",
+            kind="finding_code",
+            source="mixed",
+            samples=27,
+            successes=21,
+            success_rate=21 / 27,
+        ),
+    ]
+    intervention_metrics = [
+        EffectivenessMetric(
+            key="prompt_patch/task_prompt",
+            kind="intervention_type_target",
+            source="rule",
+            samples=25,
+            successes=18,
+            success_rate=18 / 25,
+        ),
+    ]
+    report = _build_report(
+        total_replays=27,
+        finding_metrics=finding_metrics,
+        intervention_metrics=intervention_metrics,
+    )
+    output = format_metrics_for_cli(report)
+    assert "AfterAgent effectiveness (27 total replays" in output
+    assert "Finding code resolution rates:" in output
+    assert "low_diff_overlap_with_failing_files" in output
+    assert "78%" in output
+    assert "(21/27, source=mixed)" in output
+    assert "Intervention (type/target) win rates:" in output
+    assert "prompt_patch/task_prompt" in output
+    assert "72%" in output
+    assert "(18/25, source=rule)" in output
