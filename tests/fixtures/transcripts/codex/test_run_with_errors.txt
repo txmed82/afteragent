@@ -1,0 +1,13 @@
+codex: starting task "repair CI"
+codex: reading /repo/src/app.py
+codex: patched /repo/src/app.py
+codex: running `go test ./...`
+FAIL: TestWiring (0.01s)
+    app_test.go:42: expected 3, got 2
+FAIL
+exit status 1
+codex: attempt 2
+codex: patched /repo/src/app.py
+codex: running `go test ./...`
+ok  example.com/app    0.05s
+codex: task complete

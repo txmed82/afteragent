@@ -13,6 +13,7 @@ from .transcripts import (
     TranscriptEvent,
     make_parse_error,
     parse_claude_code_jsonl,
+    parse_codex_stdout,
     parse_generic_stdout,
 )
 
@@ -355,6 +356,17 @@ class CodexAdapter(RunnerAdapter):
         if command or source_command:
             return super().detect(cwd, command, source_command)
         return (cwd / "AGENTS.md").exists()
+
+    def parse_transcript(
+        self,
+        run_id: str,
+        artifact_dir: Path,
+        stdout: str,
+        stderr: str,
+        pre_launch_state: dict,
+    ) -> list[TranscriptEvent]:
+        del artifact_dir, pre_launch_state
+        return parse_codex_stdout(run_id=run_id, stdout=stdout, stderr=stderr)
 
     def transcript_event_patterns(self) -> list[tuple[str, re.Pattern[str], str]]:
         return [

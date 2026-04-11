@@ -493,3 +493,120 @@ def _extract_target(tool_name: str, tool_input: dict) -> str | None:
     if tool_name in ("Task", "Agent"):
         return tool_input.get("subagent_type") or tool_input.get("description")
     return None
+
+
+_CODEX_READ_PATTERN = re.compile(
+    r"codex:\s*(?:reading|read)\s+(?P<path>[A-Za-z0-9_./-]+)", re.I
+)
+_CODEX_EDIT_PATTERN = re.compile(
+    r"codex:\s*(?:editing|edited|patched|wrote|updated|patching)\s+(?P<path>[A-Za-z0-9_./-]+)",
+    re.I,
+)
+_CODEX_RUN_PATTERN = re.compile(
+    r"codex:\s*running\s+`(?P<command>[^`]+)`", re.I
+)
+
+
+def parse_codex_stdout(run_id: str, stdout: str, stderr: str) -> list[TranscriptEvent]:
+    """Parse Codex CLI stdout into TranscriptEvents.
+
+    Medium fidelity: Codex's output is less structured than Claude Code's JSONL,
+    so we target recognizable `codex:` prefix lines and classify by command.
+    Never raises.
+    """
+    events: list[TranscriptEvent] = []
+    sequence = 0
+    combined = stdout + ("\n" + stderr if stderr else "")
+    if not combined.strip():
+        return events
+
+    try:
+        for line_num, line in enumerate(combined.splitlines(), start=1):
+            stripped = line.strip()
+
+            read_match = _CODEX_READ_PATTERN.search(stripped)
+            if read_match:
+                events.append(
+                    TranscriptEvent(
+                        run_id=run_id,
+                        sequence=sequence,
+                        kind=KIND_FILE_READ,
+                        tool_name="codex-read",
+                        target=read_match.group("path"),
+                        inputs_summary="",
+                        output_excerpt="",
+                        status="unknown",
+                        source=SOURCE_CODEX_STDOUT,
+                        timestamp="",
+                        raw_ref=f"line:{line_num}",
+                    )
+                )
+                sequence += 1
+                continue
+
+            edit_match = _CODEX_EDIT_PATTERN.search(stripped)
+            if edit_match:
+                events.append(
+                    TranscriptEvent(
+                        run_id=run_id,
+                        sequence=sequence,
+                        kind=KIND_FILE_EDIT,
+                        tool_name="codex-edit",
+                        target=edit_match.group("path"),
+                        inputs_summary="",
+                        output_excerpt="",
+                        status="unknown",
+                        source=SOURCE_CODEX_STDOUT,
+                        timestamp="",
+                        raw_ref=f"line:{line_num}",
+                    )
+                )
+                sequence += 1
+                continue
+
+            run_match = _CODEX_RUN_PATTERN.search(stripped)
+            if run_match:
+                command = run_match.group("command")
+                is_test = any(p.search(command) for p in _TEST_COMMAND_PATTERNS)
+                # Look ahead in combined text for failure markers after this line.
+                lookahead = _codex_lookahead(combined, line_num)
+                status = "error" if any(
+                    t in lookahead.upper() for t in ("FAIL", "FAILED", "ERROR")
+                ) else "unknown"
+                events.append(
+                    TranscriptEvent(
+                        run_id=run_id,
+                        sequence=sequence,
+                        kind=KIND_TEST_RUN if is_test else KIND_BASH_COMMAND,
+                        tool_name="codex-bash",
+                        target=command,
+                        inputs_summary="",
+                        output_excerpt=truncate(lookahead, OUTPUT_EXCERPT_MAX),
+                        status=status,
+                        source=SOURCE_CODEX_STDOUT,
+                        timestamp="",
+                        raw_ref=f"line:{line_num}",
+                    )
+                )
+                sequence += 1
+                continue
+    except Exception as exc:
+        events.append(
+            make_parse_error(
+                run_id=run_id,
+                sequence=sequence,
+                source=SOURCE_CODEX_STDOUT,
+                message=f"codex parser raised: {exc}",
+                raw_ref=None,
+            )
+        )
+
+    return events
+
+
+def _codex_lookahead(text: str, line_num: int, window: int = 8) -> str:
+    """Return up to `window` non-empty lines after line_num."""
+    lines = text.splitlines()
+    start = line_num  # line_num is 1-indexed; next line is index line_num
+    ahead = [ln for ln in lines[start : start + window] if ln.strip()]
+    return "\n".join(ahead)
