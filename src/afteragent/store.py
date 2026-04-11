@@ -20,6 +20,7 @@ class Store:
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.paths.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     @contextmanager
@@ -102,7 +103,7 @@ class Store:
 
                 CREATE TABLE IF NOT EXISTS transcript_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id TEXT NOT NULL REFERENCES runs(id),
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
                     sequence INTEGER NOT NULL,
                     kind TEXT NOT NULL,
                     tool_name TEXT,
