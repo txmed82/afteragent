@@ -242,10 +242,12 @@ def test_openai_compat_client_uses_base_url_for_openrouter(monkeypatch):
     )
     OpenAICompatClient(cfg)
 
-    fake_module.OpenAI.assert_called_once_with(
-        api_key="sk-or-test",
-        base_url="https://openrouter.ai/api/v1",
-    )
+    # Verify the essential kwargs were passed, but don't be strict about
+    # additional kwargs (e.g. timeout) that the client may also set.
+    fake_module.OpenAI.assert_called_once()
+    call_kwargs = fake_module.OpenAI.call_args.kwargs
+    assert call_kwargs["api_key"] == "sk-or-test"
+    assert call_kwargs["base_url"] == "https://openrouter.ai/api/v1"
 
 
 def test_openai_compat_client_passes_placeholder_api_key_for_ollama(monkeypatch):
