@@ -210,10 +210,10 @@ def test_run_command_writes_transcript_events_from_adapter(tmp_path: Path):
 
     rows = store.get_transcript_events(result["run_id"])
     assert len(rows) == 2
-    assert rows[0]["target"] == "/repo/README.md"
-    assert rows[0]["sequence"] == 0
-    assert rows[1]["target"] == "/repo/a.py"
-    assert rows[1]["sequence"] == 1
+    assert rows[0].target == "/repo/README.md"
+    assert rows[0].sequence == 0
+    assert rows[1].target == "/repo/a.py"
+    assert rows[1].sequence == 1
 
 
 def test_run_command_precreates_transcripts_artifact_subdir(tmp_path: Path):
@@ -284,12 +284,12 @@ def test_capture_full_pipeline_with_real_claude_code_adapter(tmp_path: Path, mon
     rows = store.get_transcript_events(run_id)
     assert len(rows) > 0
     # All non-parse-error events should be tagged with the Claude Code source.
-    non_errors = [r for r in rows if r["kind"] != "parse_error"]
-    assert all(r["source"] == "claude_code_jsonl" for r in non_errors)
+    non_errors = [r for r in rows if r.kind != "parse_error"]
+    assert all(r.source == "claude_code_jsonl" for r in non_errors)
 
     # Kind coverage: we expect at least one file_read and one file_edit
     # from the fixture.
-    kinds = {r["kind"] for r in rows}
+    kinds = {r.kind for r in rows}
     assert "file_read" in kinds
     assert "file_edit" in kinds
 

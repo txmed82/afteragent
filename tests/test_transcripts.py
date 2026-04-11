@@ -190,13 +190,13 @@ def test_store_adds_and_retrieves_transcript_events_in_order():
 
         retrieved = store.get_transcript_events("run1")
         assert len(retrieved) == 3
-        assert [e["sequence"] for e in retrieved] == [0, 1, 2]
-        assert [e["kind"] for e in retrieved] == [
+        assert [e.sequence for e in retrieved] == [0, 1, 2]
+        assert [e.kind for e in retrieved] == [
             "file_read",
             "file_edit",
             "file_read",
         ]
-        assert retrieved[0]["target"] == "/repo/a.py"
+        assert retrieved[0].target == "/repo/a.py"
 
 
 def test_store_filters_transcript_events_by_kind():
@@ -213,7 +213,7 @@ def test_store_filters_transcript_events_by_kind():
 
         reads = store.get_transcript_events("run1", kind="file_read")
         assert len(reads) == 2
-        assert all(e["kind"] == "file_read" for e in reads)
+        assert all(e.kind == "file_read" for e in reads)
 
 
 def test_store_returns_empty_list_for_run_with_no_transcript_events():

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .config import AppPaths
-from .models import EventRecord, RunRecord
+from .models import EventRecord, RunRecord, TranscriptEventRow
 from .transcripts import TranscriptEvent
 
 
@@ -277,7 +277,7 @@ class Store:
         self,
         run_id: str,
         kind: str | None = None,
-    ) -> list[sqlite3.Row]:
+    ) -> list[TranscriptEventRow]:
         with self.connection() as conn:
             if kind is None:
                 rows = conn.execute(
@@ -301,7 +301,7 @@ class Store:
                     """,
                     (run_id, kind),
                 ).fetchall()
-        return rows
+        return [TranscriptEventRow(**dict(row)) for row in rows]
 
     def list_previous_runs(self, cwd: str, before_created_at: str, limit: int = 10) -> list[RunRecord]:
         with self.connection() as conn:
