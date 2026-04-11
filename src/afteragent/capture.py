@@ -14,6 +14,7 @@ from .adapters import RunnerAdapter, ShellAdapter
 from .github import capture_github_context
 from .models import now_utc
 from .store import Store
+from .transcripts import SOURCE_STDOUT_HEURISTIC, make_parse_error
 
 
 def run_command(
@@ -49,6 +50,7 @@ def run_command(
             "extra_env_keys": sorted(extra_env.keys()) if extra_env else [],
         },
     )
+    pre_launch_state = active_adapter.pre_launch_snapshot(cwd)
 
     artifact_dir = store.run_artifact_dir(run_id)
     before_diff = capture_git_diff(cwd)
@@ -111,6 +113,31 @@ def run_command(
     parsed_events = active_adapter.parse_transcript_events(stdout_text, stderr_text, artifact_dir)
     for parsed in parsed_events:
         store.add_event(run_id, parsed["event_type"], now_utc(), parsed["payload"])
+
+    # New transcript ingestion layer (sub-project 1). Additive — does not
+    # replace the legacy parse_transcript_events path above.
+    transcripts_dir = artifact_dir / "transcripts"
+    transcripts_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        transcript_events = active_adapter.parse_transcript(
+            run_id=run_id,
+            artifact_dir=artifact_dir,
+            stdout=stdout_text,
+            stderr=stderr_text,
+            pre_launch_state=pre_launch_state,
+        )
+    except Exception as exc:
+        # Contract says parsers never raise; defend against a buggy adapter.
+        transcript_events = [
+            make_parse_error(
+                run_id=run_id,
+                sequence=0,
+                source=SOURCE_STDOUT_HEURISTIC,
+                message=f"adapter parse_transcript raised: {exc}",
+                raw_ref=None,
+            )
+        ]
+    store.add_transcript_events(run_id, transcript_events)
 
     store.add_event(
         run_id,

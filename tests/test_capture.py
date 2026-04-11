@@ -5,10 +5,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from afteragent.adapters import CodexAdapter
+from afteragent.adapters import CodexAdapter, RunnerAdapter
 from afteragent.capture import run_command, validate_github_pr
-from afteragent.config import AppPaths
+from afteragent.config import AppPaths, resolve_paths
 from afteragent.store import Store
+from afteragent.transcripts import KIND_FILE_READ, SOURCE_CLAUDE_CODE_JSONL, TranscriptEvent
 
 
 class CaptureTests(unittest.TestCase):
@@ -138,6 +139,105 @@ class CaptureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_run_command_calls_pre_launch_snapshot(tmp_path: Path):
+    calls = []
+
+    class Adapter(RunnerAdapter):
+        name = "simple"
+
+        def pre_launch_snapshot(self, cwd):
+            calls.append(cwd)
+            return {}
+
+    store = Store(resolve_paths(tmp_path))
+    run_command(
+        store=store,
+        command=["python3", "-c", "print('hi')"],
+        cwd=tmp_path,
+        adapter=Adapter(),
+    )
+    assert len(calls) == 1
+    assert calls[0] == tmp_path
+
+
+def test_run_command_writes_transcript_events_from_adapter(tmp_path: Path):
+    class StubAdapter(RunnerAdapter):
+        name = "stub"
+
+        def pre_launch_snapshot(self, cwd):
+            return {"hello": "world"}
+
+        def parse_transcript(self, run_id, artifact_dir, stdout, stderr, pre_launch_state):
+            assert pre_launch_state == {"hello": "world"}
+            return [
+                TranscriptEvent(
+                    run_id=run_id,
+                    sequence=0,
+                    kind=KIND_FILE_READ,
+                    tool_name="Read",
+                    target="/repo/README.md",
+                    source=SOURCE_CLAUDE_CODE_JSONL,
+                    raw_ref="line:1",
+                    inputs_summary="",
+                    output_excerpt="",
+                    status="success",
+                    timestamp="2026-04-10T12:00:00Z",
+                ),
+                TranscriptEvent(
+                    run_id=run_id,
+                    sequence=1,
+                    kind=KIND_FILE_READ,
+                    tool_name="Read",
+                    target="/repo/a.py",
+                    source=SOURCE_CLAUDE_CODE_JSONL,
+                    raw_ref="line:2",
+                    inputs_summary="",
+                    output_excerpt="",
+                    status="success",
+                    timestamp="2026-04-10T12:00:01Z",
+                ),
+            ]
+
+    store = Store(resolve_paths(tmp_path))
+    result = run_command(
+        store=store,
+        command=["python3", "-c", "print('hi')"],
+        cwd=tmp_path,
+        adapter=StubAdapter(),
+    )
+
+    rows = store.get_transcript_events(result["run_id"])
+    assert len(rows) == 2
+    assert rows[0]["target"] == "/repo/README.md"
+    assert rows[0]["sequence"] == 0
+    assert rows[1]["target"] == "/repo/a.py"
+    assert rows[1]["sequence"] == 1
+
+
+def test_run_command_precreates_transcripts_artifact_subdir(tmp_path: Path):
+    subdir_seen = []
+
+    class Adapter(RunnerAdapter):
+        name = "check"
+
+        def parse_transcript(self, run_id, artifact_dir, stdout, stderr, pre_launch_state):
+            subdir_seen.append(artifact_dir / "transcripts")
+            return []
+
+    store = Store(resolve_paths(tmp_path))
+    run_command(
+        store=store,
+        command=["python3", "-c", "print('hi')"],
+        cwd=tmp_path,
+        adapter=Adapter(),
+    )
+    assert len(subdir_seen) == 1
+    # The transcripts subdir must have been pre-created so the adapter could
+    # have written into it. The parser returned [] so nothing was actually
+    # written, but the directory must exist.
+    assert subdir_seen[0].exists()
 
 
 def make_paths(root: Path) -> AppPaths:
