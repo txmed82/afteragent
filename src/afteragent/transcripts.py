@@ -516,6 +516,41 @@ _CODEX_RUN_PATTERN = re.compile(
     r"codex:\s*running\s+`(?P<command>[^`]+)`", re.I
 )
 
+# Detect "N failed" where N > 0. Captures the integer so callers can verify.
+_FAILED_COUNT_PATTERN = re.compile(r"\b(\d+)\s+failed\b", re.I)
+# Standalone failure tokens that are NOT part of a "0 failed" summary. Word
+# boundaries prevent matching inside other words; uppercase-only to allow
+# callers to `.upper()` the lookahead once.
+_STANDALONE_FAIL_PATTERN = re.compile(r"\b(FAIL|FAILED|ERROR)\b")
+
+
+def _codex_lookahead_is_error(lookahead: str) -> bool:
+    """Decide whether a Codex post-command lookahead window indicates failure.
+
+    Handles the 'N failed' case correctly: "0 failed" is success, "1 failed"
+    or more is failure. Also catches standalone FAIL/FAILED/ERROR tokens that
+    don't appear as part of a passing-tests summary.
+    """
+    # First: is there an explicit "N failed" count? That's the authoritative
+    # signal for test-runner output.
+    has_count = False
+    for match in _FAILED_COUNT_PATTERN.finditer(lookahead):
+        has_count = True
+        try:
+            if int(match.group(1)) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    # If we saw at least one "N failed" and none of them were > 0, the output
+    # is affirmatively a passing test summary — don't let a bare "FAIL" word
+    # elsewhere flip it.
+    if has_count:
+        return False
+
+    # Fallback: standalone FAIL/FAILED/ERROR tokens anywhere in the lookahead.
+    upper = lookahead.upper()
+    return bool(_STANDALONE_FAIL_PATTERN.search(upper))
+
 
 def parse_codex_stdout(run_id: str, stdout: str, stderr: str) -> list[TranscriptEvent]:
     """Parse Codex CLI stdout into TranscriptEvents.
@@ -580,9 +615,9 @@ def parse_codex_stdout(run_id: str, stdout: str, stderr: str) -> list[Transcript
                 is_test = any(p.search(command) for p in _TEST_COMMAND_PATTERNS)
                 # Look ahead in combined text for failure markers after this line.
                 lookahead = _codex_lookahead(combined, line_num)
-                status = "error" if any(
-                    t in lookahead.upper() for t in ("FAIL", "FAILED", "ERROR")
-                ) else "unknown"
+                # Use the smart detector that distinguishes "0 failed" (pass)
+                # from "1 failed" or bare FAIL/ERROR tokens (real failure).
+                status = "error" if _codex_lookahead_is_error(lookahead) else "unknown"
                 events.append(
                     TranscriptEvent(
                         run_id=run_id,
