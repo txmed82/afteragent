@@ -99,6 +99,16 @@ def analyze_run(store: Store, run_id: str) -> tuple[list[PatternFinding], list[I
             )
         )
 
+    # Generic (non-PR) detectors — run alongside the PR-oriented ones.
+    # Per-detector failures are isolated inside run_generic_detectors, but
+    # wrap the whole call in try/except so a broken import or module-level
+    # bug can't break analyze_run.
+    try:
+        from .diagnostics_generic import run_generic_detectors
+        findings.extend(run_generic_detectors(context, store))
+    except Exception:
+        pass
+
     interventions = build_interventions(findings)
     store.replace_diagnosis(
         run_id,
@@ -252,6 +262,120 @@ def build_interventions(
             )
         )
 
+    if "agent_edits_without_tests" in codes:
+        interventions.append(
+            Intervention(
+                type="instruction_patch",
+                title="Require a test run after edits",
+                target="repo_instructions",
+                content=(
+                    "Before declaring a task complete, run the project's test "
+                    "command (pytest, npm test, go test, etc.) and summarize "
+                    "the result. Never finish an edit cycle without verifying it."
+                ),
+                scope="pr",
+            )
+        )
+        interventions.append(
+            Intervention(
+                type="prompt_patch",
+                title="Test after every edit",
+                target="task_prompt",
+                content=(
+                    "After each file edit in this run, run the relevant test "
+                    "command and quote the outcome in your next message before "
+                    "moving to the next edit."
+                ),
+                scope="pr",
+            )
+        )
+
+    if "agent_stuck_on_file" in codes:
+        interventions.append(
+            Intervention(
+                type="runtime_guardrail",
+                title="Break edit loops with test runs",
+                target="runner_policy",
+                content=(
+                    "If the agent edits the same file more than 3 times in a row "
+                    "without running tests in between, stop editing and run the "
+                    "relevant test command before continuing."
+                ),
+                scope="pr",
+            )
+        )
+        interventions.append(
+            Intervention(
+                type="prompt_patch",
+                title="Run tests between repeated edits",
+                target="task_prompt",
+                content=(
+                    "If you find yourself editing the same file multiple times, "
+                    "stop and run the relevant test command. Quote the result "
+                    "before deciding your next edit — don't guess."
+                ),
+                scope="pr",
+            )
+        )
+
+    if "agent_read_edit_divergence" in codes:
+        interventions.append(
+            Intervention(
+                type="instruction_patch",
+                title="Read the files you intend to edit",
+                target="repo_instructions",
+                content=(
+                    "Before editing a file, read it. If you read a file that is "
+                    "not the file you are about to edit, summarize why that "
+                    "reading is relevant to the edit you plan to make."
+                ),
+                scope="pr",
+            )
+        )
+
+    if "agent_command_failure_hidden" in codes:
+        interventions.append(
+            Intervention(
+                type="instruction_patch",
+                title="Verify success before claiming it",
+                target="repo_instructions",
+                content=(
+                    "Before declaring a task done, run the relevant verification "
+                    "command (tests, build, lint) and quote the exit code. Never "
+                    "claim completion when the most recent command failed."
+                ),
+                scope="pr",
+            )
+        )
+        interventions.append(
+            Intervention(
+                type="prompt_patch",
+                title="Quote the exit code before claiming success",
+                target="task_prompt",
+                content=(
+                    "Before saying the task is fixed, done, or ready, run the "
+                    "relevant verification command and quote its exit code. If "
+                    "the exit code is non-zero, the task is not done."
+                ),
+                scope="pr",
+            )
+        )
+
+    if "agent_zero_meaningful_activity" in codes:
+        interventions.append(
+            Intervention(
+                type="prompt_patch",
+                title="Clarify task intent before acting",
+                target="task_prompt",
+                content=(
+                    "If the task is unclear, ask a clarifying question before "
+                    "taking any action. If the task is clear but requires no "
+                    "code changes, say so explicitly and explain why."
+                ),
+                scope="pr",
+            )
+        )
+
     return interventions
 
 
@@ -274,6 +398,7 @@ def load_run_context(store: Store, run_id: str) -> dict:
     failure_files = extract_failure_files(stdout, stderr, gh_context)
     failure_signatures = extract_failure_signatures(stdout, stderr, gh_context)
     unresolved_paths = unresolved_review_paths(gh_context, run.created_at)
+    transcript_events = store.get_transcript_events(run_id)
     return {
         "run": run,
         "stdout": stdout,
@@ -285,6 +410,7 @@ def load_run_context(store: Store, run_id: str) -> dict:
         "failure_files": failure_files,
         "failure_signatures": failure_signatures,
         "unresolved_comment_paths": unresolved_paths,
+        "transcript_events": transcript_events,
     }
 
 
