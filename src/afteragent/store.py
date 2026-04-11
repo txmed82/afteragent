@@ -258,7 +258,11 @@ class Store:
                 """,
                 [
                     {
-                        "run_id": event.run_id,
+                        # Always use the method parameter run_id, never
+                        # event.run_id. If a caller builds events with a
+                        # stale or mismatched run_id field, the authoritative
+                        # answer is the run_id they just passed to this call.
+                        "run_id": run_id,
                         "sequence": event.sequence,
                         "kind": event.kind,
                         "tool_name": event.tool_name,

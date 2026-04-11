@@ -231,3 +231,35 @@ def test_store_handles_empty_event_list_in_add():
         store.create_run("run1", "echo hi", str(tmp), "2026-04-10T12:00:00Z")
         store.add_transcript_events("run1", [])
         assert store.get_transcript_events("run1") == []
+
+
+def test_store_add_transcript_events_uses_method_run_id_not_event_run_id():
+    """Regression: add_transcript_events must use the method parameter run_id
+    for the row's run_id column, not event.run_id. If a caller builds events
+    with a stale or mismatched run_id field and then passes a different run_id
+    to the method, the events must land under the caller's specified run_id —
+    the method parameter is authoritative.
+    """
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
+        store = _make_store(tmp)
+        store.create_run("run_target", "echo hi", str(tmp), "2026-04-10T12:00:00Z")
+        store.create_run("run_other", "echo hi", str(tmp), "2026-04-10T12:00:00Z")
+
+        # Build events whose run_id field points at run_other, but pass
+        # run_target as the method parameter. After the fix, events should
+        # land under run_target — not run_other.
+        events = [
+            _make_event("run_other", 0, KIND_FILE_READ, "/repo/a.py"),
+            _make_event("run_other", 1, KIND_FILE_EDIT, "/repo/b.py"),
+        ]
+        store.add_transcript_events("run_target", events)
+
+        # Events landed under the method parameter run_id.
+        target_events = store.get_transcript_events("run_target")
+        assert len(target_events) == 2
+        assert all(e.run_id == "run_target" for e in target_events)
+
+        # The other run received nothing.
+        other_events = store.get_transcript_events("run_other")
+        assert other_events == []
