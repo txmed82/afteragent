@@ -10,7 +10,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .adapters import RunnerAdapter, ShellAdapter
+from .adapters import RunnerAdapter, select_runner_adapter
 from .github import capture_github_context
 from .models import now_utc
 from .store import Store
@@ -28,7 +28,7 @@ def run_command(
     extra_env: dict[str, str] | None = None,
     adapter: RunnerAdapter | None = None,
 ) -> dict[str, str | int]:
-    active_adapter = adapter or ShellAdapter()
+    active_adapter = adapter or select_runner_adapter(cwd, command=command)
     run_id = uuid.uuid4().hex[:12]
     command_text = shlex.join(command)
     created_at = now_utc()
