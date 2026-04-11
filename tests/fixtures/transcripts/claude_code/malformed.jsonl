@@ -1,0 +1,4 @@
+{"type":"permission-mode","permissionMode":"default","sessionId":"sess-malformed"}
+{"parentUuid":null,"uuid":"u1","timestamp":"2026-04-10T14:00:01Z","message":{"role":"user","content":[{"type":"text","text":"start"}]}}
+{not valid json at all
+{"parentUuid":"u1","uuid":"u2","timestamp":"2026-04-10T14:00:02Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Read","input":{"file_path":"/repo/a.py"}}]}}

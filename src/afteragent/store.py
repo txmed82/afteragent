@@ -6,7 +6,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .config import AppPaths
-from .models import EventRecord, RunRecord
+from .models import EventRecord, RunRecord, TranscriptEventRow
+from .transcripts import TranscriptEvent
 
 
 class Store:
@@ -19,6 +20,7 @@ class Store:
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.paths.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     @contextmanager
@@ -98,6 +100,24 @@ class Store:
                     applied_before_replay INTEGER NOT NULL DEFAULT 0,
                     comparison_json TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS transcript_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    tool_name TEXT,
+                    target TEXT,
+                    inputs_summary TEXT NOT NULL DEFAULT '',
+                    output_excerpt TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'unknown',
+                    source TEXT NOT NULL,
+                    timestamp TEXT NOT NULL DEFAULT '',
+                    raw_ref TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_transcript_events_run_seq  ON transcript_events (run_id, sequence);
+                CREATE INDEX IF NOT EXISTS idx_transcript_events_run_kind ON transcript_events (run_id, kind);
                 """
             )
             self._ensure_column(conn, "interventions", "scope", "TEXT NOT NULL DEFAULT 'pr'")
@@ -216,6 +236,77 @@ class Store:
                 (run_id,),
             ).fetchall()
         return [EventRecord(**dict(row)) for row in rows]
+
+    def add_transcript_events(
+        self,
+        run_id: str,
+        events: list[TranscriptEvent],
+    ) -> None:
+        if not events:
+            return
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO transcript_events (
+                    run_id, sequence, kind, tool_name, target,
+                    inputs_summary, output_excerpt, status, source, timestamp, raw_ref
+                )
+                VALUES (
+                    :run_id, :sequence, :kind, :tool_name, :target,
+                    :inputs_summary, :output_excerpt, :status, :source, :timestamp, :raw_ref
+                )
+                """,
+                [
+                    {
+                        # Always use the method parameter run_id, never
+                        # event.run_id. If a caller builds events with a
+                        # stale or mismatched run_id field, the authoritative
+                        # answer is the run_id they just passed to this call.
+                        "run_id": run_id,
+                        "sequence": event.sequence,
+                        "kind": event.kind,
+                        "tool_name": event.tool_name,
+                        "target": event.target,
+                        "inputs_summary": event.inputs_summary,
+                        "output_excerpt": event.output_excerpt,
+                        "status": event.status,
+                        "source": event.source,
+                        "timestamp": event.timestamp,
+                        "raw_ref": event.raw_ref,
+                    }
+                    for event in events
+                ],
+            )
+
+    def get_transcript_events(
+        self,
+        run_id: str,
+        kind: str | None = None,
+    ) -> list[TranscriptEventRow]:
+        with self.connection() as conn:
+            if kind is None:
+                rows = conn.execute(
+                    """
+                    SELECT id, run_id, sequence, kind, tool_name, target,
+                           inputs_summary, output_excerpt, status, source, timestamp, raw_ref
+                    FROM transcript_events
+                    WHERE run_id = ?
+                    ORDER BY sequence ASC
+                    """,
+                    (run_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, run_id, sequence, kind, tool_name, target,
+                           inputs_summary, output_excerpt, status, source, timestamp, raw_ref
+                    FROM transcript_events
+                    WHERE run_id = ? AND kind = ?
+                    ORDER BY sequence ASC
+                    """,
+                    (run_id, kind),
+                ).fetchall()
+        return [TranscriptEventRow(**dict(row)) for row in rows]
 
     def list_previous_runs(self, cwd: str, before_created_at: str, limit: int = 10) -> list[RunRecord]:
         with self.connection() as conn:

@@ -1,0 +1,9 @@
+{"type":"permission-mode","permissionMode":"default","sessionId":"sess-simple"}
+{"parentUuid":null,"uuid":"u1","timestamp":"2026-04-10T12:00:01Z","message":{"role":"user","content":[{"type":"text","text":"Please fix the failing test in test_foo.py"}]}}
+{"parentUuid":"u1","uuid":"u2","timestamp":"2026-04-10T12:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"I will read the test file first."},{"type":"tool_use","id":"tu1","name":"Read","input":{"file_path":"/repo/tests/test_foo.py"}}]}}
+{"parentUuid":"u2","uuid":"u3","timestamp":"2026-04-10T12:00:03Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"def test_foo():\n    assert add(1,1) == 3\n"}]}}
+{"parentUuid":"u3","uuid":"u4","timestamp":"2026-04-10T12:00:04Z","message":{"role":"assistant","content":[{"type":"text","text":"The test expects add(1,1) to equal 3 but that's wrong; fixing."},{"type":"tool_use","id":"tu2","name":"Edit","input":{"file_path":"/repo/tests/test_foo.py","old_string":"assert add(1,1) == 3","new_string":"assert add(1,1) == 2"}}]}}
+{"parentUuid":"u4","uuid":"u5","timestamp":"2026-04-10T12:00:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":"File edited successfully"}]}}
+{"parentUuid":"u5","uuid":"u6","timestamp":"2026-04-10T12:00:06Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu3","name":"Bash","input":{"command":"pytest tests/test_foo.py -v"}}]}}
+{"parentUuid":"u6","uuid":"u7","timestamp":"2026-04-10T12:00:07Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu3","content":"1 passed in 0.01s","is_error":false}]}}
+{"parentUuid":"u7","uuid":"u8","timestamp":"2026-04-10T12:00:08Z","message":{"role":"assistant","content":[{"type":"text","text":"Fixed and test passes."}]}}

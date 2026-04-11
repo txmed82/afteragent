@@ -1,0 +1,6 @@
+{"type":"permission-mode","permissionMode":"default","sessionId":"sess-ignored"}
+{"parentUuid":null,"uuid":"u1","timestamp":"2026-04-10T13:00:01Z","message":{"role":"user","content":[{"type":"text","text":"Fix the failing CI"}]}}
+{"parentUuid":"u1","uuid":"u2","timestamp":"2026-04-10T13:00:02Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Read","input":{"file_path":"/repo/README.md"}}]}}
+{"parentUuid":"u2","uuid":"u3","timestamp":"2026-04-10T13:00:03Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"# My Project\n"}]}}
+{"parentUuid":"u3","uuid":"u4","timestamp":"2026-04-10T13:00:04Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu2","name":"Edit","input":{"file_path":"/repo/README.md","old_string":"# My Project","new_string":"# My Project\n\nUpdated."}}]}}
+{"parentUuid":"u4","uuid":"u5","timestamp":"2026-04-10T13:00:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":"File edited successfully"}]}}

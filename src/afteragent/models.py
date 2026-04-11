@@ -27,6 +27,22 @@ class EventRecord:
 
 
 @dataclass(slots=True)
+class TranscriptEventRow:
+    id: int
+    run_id: str
+    sequence: int
+    kind: str
+    tool_name: str | None
+    target: str | None
+    inputs_summary: str
+    output_excerpt: str
+    status: str
+    source: str
+    timestamp: str
+    raw_ref: str | None
+
+
+@dataclass(slots=True)
 class PatternFinding:
     code: str
     title: str

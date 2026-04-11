@@ -1,0 +1,8 @@
+codex: starting task "fix failing test"
+codex: reading /repo/tests/test_foo.py
+codex: editing /repo/tests/test_foo.py
+codex: running `pytest tests/test_foo.py`
+==================== test session starts ====================
+tests/test_foo.py .                                    [100%]
+==================== 1 passed in 0.02s ======================
+codex: task complete

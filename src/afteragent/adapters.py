@@ -3,8 +3,19 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from .transcripts import (
+    SOURCE_CLAUDE_CODE_JSONL,
+    TranscriptEvent,
+    make_parse_error,
+    parse_claude_code_jsonl,
+    parse_codex_stdout,
+    parse_generic_stdout,
+)
 
 KNOWN_INSTRUCTION_FILES = (
     "AGENTS.md",
@@ -89,6 +100,33 @@ class RunnerAdapter:
                 continue
             events.extend(self._parse_pattern_events(text, source=path.name))
         return dedupe_events(events)
+
+    def pre_launch_snapshot(self, cwd: Path) -> dict:
+        """Snapshot runner-specific pre-launch state (e.g. transcript directory).
+
+        Called by capture.run_command before subprocess.Popen. The returned
+        dict is passed back into parse_transcript after the subprocess exits.
+        Default implementation returns an empty dict.
+        """
+        del cwd
+        return {}
+
+    def parse_transcript(
+        self,
+        run_id: str,
+        artifact_dir: Path,
+        stdout: str,
+        stderr: str,
+        pre_launch_state: dict,
+    ) -> list[TranscriptEvent]:
+        """Parse the runner's transcript into normalized TranscriptEvent objects.
+
+        Default implementation uses the generic stdout heuristic parser.
+        Runner subclasses override to provide richer parsing.
+        Must never raise — all failures become parse_error events.
+        """
+        del artifact_dir, pre_launch_state
+        return parse_generic_stdout(run_id=run_id, stdout=stdout, stderr=stderr)
 
     def _parse_pattern_events(self, text: str, source: str) -> list[dict]:
         events = []
@@ -188,6 +226,121 @@ class ClaudeCodeAdapter(RunnerAdapter):
     def transcript_file_globs(self) -> tuple[str, ...]:
         return ("claude*.log", "claude*.jsonl")
 
+    def pre_launch_snapshot(self, cwd: Path) -> dict:
+        slug = claude_project_slug(cwd)
+        project_dir = Path.home() / ".claude" / "projects" / slug
+        pre: dict[Path, float] = {}
+        if project_dir.exists():
+            try:
+                for path in project_dir.glob("*.jsonl"):
+                    try:
+                        pre[path] = path.stat().st_mtime
+                    except OSError:
+                        continue
+            except OSError:
+                pass
+        return {
+            "claude_project_dir": project_dir,
+            "pre_jsonl_files": pre,
+            "launched_at": time.time(),
+        }
+
+    def parse_transcript(
+        self,
+        run_id: str,
+        artifact_dir: Path,
+        stdout: str,
+        stderr: str,
+        pre_launch_state: dict,
+    ) -> list[TranscriptEvent]:
+        transcripts_dir = artifact_dir / "transcripts"
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
+
+        project_dir = pre_launch_state.get("claude_project_dir")
+        pre_files = pre_launch_state.get("pre_jsonl_files", {})
+        launched_at = pre_launch_state.get("launched_at", 0.0)
+        exit_time = time.time()
+
+        if not project_dir:
+            return self._fallback_with_warning(
+                run_id=run_id,
+                stdout=stdout,
+                stderr=stderr,
+                message="Claude Code project dir not resolved",
+            )
+
+        chosen, ambiguous = find_candidate_jsonl(
+            project_dir=project_dir,
+            pre_jsonl_files=pre_files,
+            launched_at=launched_at,
+            exit_time=exit_time,
+        )
+
+        if chosen is None:
+            return self._fallback_with_warning(
+                run_id=run_id,
+                stdout=stdout,
+                stderr=stderr,
+                message=f"no new or modified JSONL found under {project_dir}",
+            )
+
+        try:
+            text = chosen.read_text()
+        except OSError as exc:
+            return self._fallback_with_warning(
+                run_id=run_id,
+                stdout=stdout,
+                stderr=stderr,
+                message=f"failed to read {chosen}: {exc}",
+            )
+
+        # Copy the raw JSONL as a run artifact.
+        try:
+            shutil.copyfile(chosen, transcripts_dir / "session.jsonl")
+        except OSError:
+            pass  # non-fatal; normalized events still land
+
+        events = parse_claude_code_jsonl(run_id=run_id, jsonl_text=text)
+
+        if ambiguous:
+            events.insert(
+                0,
+                make_parse_error(
+                    run_id=run_id,
+                    sequence=0,
+                    source=SOURCE_CLAUDE_CODE_JSONL,
+                    message=f"multiple JSONL candidates found; chose {chosen.name}",
+                    raw_ref=None,
+                ),
+            )
+            # Re-number sequences so they stay monotonic.
+            for idx, ev in enumerate(events):
+                ev.sequence = idx
+
+        return events
+
+    def _fallback_with_warning(
+        self,
+        run_id: str,
+        stdout: str,
+        stderr: str,
+        message: str,
+    ) -> list[TranscriptEvent]:
+        events: list[TranscriptEvent] = [
+            make_parse_error(
+                run_id=run_id,
+                sequence=0,
+                source=SOURCE_CLAUDE_CODE_JSONL,
+                message=message,
+                raw_ref=None,
+            )
+        ]
+        generic = parse_generic_stdout(run_id=run_id, stdout=stdout, stderr=stderr)
+        for ev in generic:
+            ev.sequence = len(events)
+            events.append(ev)
+        return events
+
 
 class CodexAdapter(RunnerAdapter):
     name = "codex"
@@ -203,6 +356,17 @@ class CodexAdapter(RunnerAdapter):
         if command or source_command:
             return super().detect(cwd, command, source_command)
         return (cwd / "AGENTS.md").exists()
+
+    def parse_transcript(
+        self,
+        run_id: str,
+        artifact_dir: Path,
+        stdout: str,
+        stderr: str,
+        pre_launch_state: dict,
+    ) -> list[TranscriptEvent]:
+        del artifact_dir, pre_launch_state
+        return parse_codex_stdout(run_id=run_id, stdout=stdout, stderr=stderr)
 
     def transcript_event_patterns(self) -> list[tuple[str, re.Pattern[str], str]]:
         return [
@@ -229,6 +393,75 @@ class OpenClawAdapter(RunnerAdapter):
 
     def transcript_file_globs(self) -> tuple[str, ...]:
         return ("openclaw*.log", "openclaw*.jsonl")
+
+
+def claude_project_slug(cwd: Path) -> str:
+    """Compute the Claude Code project-directory slug for a working directory.
+
+    Claude Code stores JSONL transcripts under ~/.claude/projects/<slug>/ where
+    <slug> is the absolute cwd path with "/" and " " both replaced by "-".
+    Other characters are preserved including case.
+
+    Uses Path.absolute() (not resolve()) so symlinks are NOT followed — this
+    matches the path Claude Code itself stores under, which is the literal cwd
+    as seen by the invoking process.
+    """
+    s = str(cwd.absolute())
+    return s.replace("/", "-").replace(" ", "-")
+
+
+def find_candidate_jsonl(
+    project_dir: Path,
+    pre_jsonl_files: dict[Path, float],
+    launched_at: float,
+    exit_time: float,
+) -> tuple[Path | None, bool]:
+    """Identify which JSONL file a Claude Code invocation wrote.
+
+    Returns (chosen_path, ambiguous). ambiguous=True means multiple candidates
+    existed and the heuristic picked one — caller should emit a parse_error.
+    """
+    if not project_dir.exists():
+        return (None, False)
+
+    try:
+        current = list(project_dir.glob("*.jsonl"))
+    except OSError:
+        return (None, False)
+
+    candidates: list[Path] = []
+    for path in current:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if path not in pre_jsonl_files:
+            candidates.append(path)
+        elif mtime > pre_jsonl_files[path] and mtime >= launched_at:
+            candidates.append(path)
+
+    if not candidates:
+        return (None, False)
+    if len(candidates) == 1:
+        return (candidates[0], False)
+
+    # Multiple candidates: pick the one whose mtime is closest to (but not
+    # later than) exit_time + 2s grace.
+    grace = exit_time + 2.0
+    best: Path | None = None
+    best_delta: float | None = None
+    for path in candidates:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > grace:
+            continue
+        delta = abs(grace - mtime)
+        if best_delta is None or delta < best_delta:
+            best = path
+            best_delta = delta
+    return (best or candidates[0], True)
 
 
 ADAPTERS: tuple[RunnerAdapter, ...] = (
