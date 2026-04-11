@@ -373,13 +373,16 @@ class Store:
         run_id: str,
         findings_rows: list[dict],
         interventions_rows: list[dict],
+        rule_codes_to_remove: list[str] | None = None,
     ) -> None:
         """Replace only the LLM-sourced findings and interventions for a run.
 
         Unlike replace_diagnosis (which replaces everything for the run),
         this method only deletes rows with source='llm' before inserting new
         ones. Rule-based findings/interventions from a prior analyze_run pass
-        are preserved untouched.
+        are preserved untouched, unless their code appears in
+        rule_codes_to_remove (used when the LLM confirmed/rejected a rule
+        finding and the LLM version supersedes it).
         """
         with self.connection() as conn:
             conn.execute(
@@ -390,6 +393,12 @@ class Store:
                 "DELETE FROM interventions WHERE run_id = ? AND source = 'llm'",
                 (run_id,),
             )
+            if rule_codes_to_remove:
+                placeholders = ",".join("?" * len(rule_codes_to_remove))
+                conn.execute(
+                    f"DELETE FROM diagnoses WHERE run_id = ? AND source = 'rule' AND code IN ({placeholders})",
+                    (run_id, *rule_codes_to_remove),
+                )
             if findings_rows:
                 conn.executemany(
                     """
