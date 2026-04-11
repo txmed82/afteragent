@@ -268,3 +268,69 @@ def test_find_candidate_jsonl_picks_closest_to_exit_when_ambiguous(tmp_path: Pat
     # Both are candidates (both post-launch). Expect the one closest to exit.
     assert chosen == b
     assert ambiguous is True
+
+
+def test_claude_code_adapter_parse_transcript_end_to_end(tmp_path: Path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    slug = claude_project_slug(repo)
+    project_dir = fake_home / ".claude" / "projects" / slug
+    project_dir.mkdir(parents=True)
+
+    adapter = ClaudeCodeAdapter()
+    pre_state = adapter.pre_launch_snapshot(repo)
+
+    # Simulate Claude Code writing a new JSONL file mid-run.
+    fixture = Path(__file__).parent / "fixtures" / "transcripts" / "claude_code" / "simple_edit_run.jsonl"
+    session_jsonl = project_dir / "sess-simple.jsonl"
+    session_jsonl.write_text(fixture.read_text())
+
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+
+    events = adapter.parse_transcript(
+        run_id="r1",
+        artifact_dir=artifact_dir,
+        stdout="",
+        stderr="",
+        pre_launch_state=pre_state,
+    )
+
+    assert len(events) >= 1
+    assert all(e.source == "claude_code_jsonl" for e in events)
+    # The raw JSONL was copied into the run's transcripts dir.
+    copied = artifact_dir / "transcripts" / "session.jsonl"
+    assert copied.exists()
+    assert copied.read_text() == fixture.read_text()
+
+
+def test_claude_code_adapter_parse_transcript_falls_back_when_no_jsonl(tmp_path: Path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    adapter = ClaudeCodeAdapter()
+    pre_state = adapter.pre_launch_snapshot(repo)
+
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+
+    stdout = "pytest tests/\nFAILED: boom\n"
+    events = adapter.parse_transcript(
+        run_id="r1",
+        artifact_dir=artifact_dir,
+        stdout=stdout,
+        stderr="",
+        pre_launch_state=pre_state,
+    )
+
+    # No JSONL found → at least one parse_error + generic stdout events.
+    assert any(e.kind == "parse_error" for e in events)
+    assert any(e.source == "stdout_heuristic" for e in events)

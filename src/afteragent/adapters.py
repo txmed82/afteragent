@@ -3,11 +3,18 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .transcripts import TranscriptEvent, parse_generic_stdout
+from .transcripts import (
+    SOURCE_CLAUDE_CODE_JSONL,
+    TranscriptEvent,
+    make_parse_error,
+    parse_claude_code_jsonl,
+    parse_generic_stdout,
+)
 
 KNOWN_INSTRUCTION_FILES = (
     "AGENTS.md",
@@ -236,6 +243,102 @@ class ClaudeCodeAdapter(RunnerAdapter):
             "pre_jsonl_files": pre,
             "launched_at": time.time(),
         }
+
+    def parse_transcript(
+        self,
+        run_id: str,
+        artifact_dir: Path,
+        stdout: str,
+        stderr: str,
+        pre_launch_state: dict,
+    ) -> list[TranscriptEvent]:
+        transcripts_dir = artifact_dir / "transcripts"
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
+
+        project_dir = pre_launch_state.get("claude_project_dir")
+        pre_files = pre_launch_state.get("pre_jsonl_files", {})
+        launched_at = pre_launch_state.get("launched_at", 0.0)
+        exit_time = time.time()
+
+        if not project_dir:
+            return self._fallback_with_warning(
+                run_id=run_id,
+                stdout=stdout,
+                stderr=stderr,
+                message="Claude Code project dir not resolved",
+            )
+
+        chosen, ambiguous = find_candidate_jsonl(
+            project_dir=project_dir,
+            pre_jsonl_files=pre_files,
+            launched_at=launched_at,
+            exit_time=exit_time,
+        )
+
+        if chosen is None:
+            return self._fallback_with_warning(
+                run_id=run_id,
+                stdout=stdout,
+                stderr=stderr,
+                message=f"no new or modified JSONL found under {project_dir}",
+            )
+
+        try:
+            text = chosen.read_text()
+        except OSError as exc:
+            return self._fallback_with_warning(
+                run_id=run_id,
+                stdout=stdout,
+                stderr=stderr,
+                message=f"failed to read {chosen}: {exc}",
+            )
+
+        # Copy the raw JSONL as a run artifact.
+        try:
+            shutil.copyfile(chosen, transcripts_dir / "session.jsonl")
+        except OSError:
+            pass  # non-fatal; normalized events still land
+
+        events = parse_claude_code_jsonl(run_id=run_id, jsonl_text=text)
+
+        if ambiguous:
+            events.insert(
+                0,
+                make_parse_error(
+                    run_id=run_id,
+                    sequence=0,
+                    source=SOURCE_CLAUDE_CODE_JSONL,
+                    message=f"multiple JSONL candidates found; chose {chosen.name}",
+                    raw_ref=None,
+                ),
+            )
+            # Re-number sequences so they stay monotonic.
+            for idx, ev in enumerate(events):
+                ev.sequence = idx
+
+        return events
+
+    def _fallback_with_warning(
+        self,
+        run_id: str,
+        stdout: str,
+        stderr: str,
+        message: str,
+    ) -> list[TranscriptEvent]:
+        events: list[TranscriptEvent] = [
+            make_parse_error(
+                run_id=run_id,
+                sequence=0,
+                source=SOURCE_CLAUDE_CODE_JSONL,
+                message=message,
+                raw_ref=None,
+            )
+        ]
+        generic = parse_generic_stdout(run_id=run_id, stdout=stdout, stderr=stderr)
+        for ev in generic:
+            ev.sequence = len(events)
+            events.append(ev)
+        return events
 
 
 class CodexAdapter(RunnerAdapter):
