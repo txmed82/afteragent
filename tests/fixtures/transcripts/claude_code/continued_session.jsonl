@@ -1,0 +1,4 @@
+{"type":"permission-mode","permissionMode":"default","sessionId":"sess-continued"}
+{"parentUuid":null,"uuid":"u1","timestamp":"2026-04-10T15:00:01Z","message":{"role":"user","content":[{"type":"text","text":"continue where we left off"}]}}
+{"parentUuid":"u1","uuid":"u2","timestamp":"2026-04-10T15:00:02Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"TodoWrite","input":{"todos":[{"content":"verify fix","status":"pending"}]}}]}}
+{"parentUuid":"u2","uuid":"u3","timestamp":"2026-04-10T15:00:03Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"Todo written"}]}}

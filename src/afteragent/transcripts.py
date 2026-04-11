@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -210,3 +211,273 @@ def _first_meaningful_line(text: str) -> str:
 def _last_meaningful_lines(text: str, n: int) -> str:
     meaningful = [line.rstrip() for line in text.splitlines() if line.strip()]
     return "\n".join(meaningful[-n:])
+
+
+# Tool names that map to specific event kinds.
+_CLAUDE_TOOL_KIND_MAP = {
+    "Read": KIND_FILE_READ,
+    "Edit": KIND_FILE_EDIT,
+    "Write": KIND_FILE_EDIT,
+    "NotebookEdit": KIND_FILE_EDIT,
+    "Bash": KIND_BASH_COMMAND,
+    "Grep": KIND_SEARCH,
+    "Glob": KIND_SEARCH,
+    "WebFetch": KIND_WEB_FETCH,
+    "WebSearch": KIND_WEB_FETCH,
+    "TodoWrite": KIND_TODO_UPDATE,
+    "TaskCreate": KIND_TODO_UPDATE,
+    "TaskUpdate": KIND_TODO_UPDATE,
+    "Task": KIND_SUBAGENT_CALL,
+    "Agent": KIND_SUBAGENT_CALL,
+}
+
+# Bash command prefixes that indicate a test run.
+_TEST_COMMAND_PATTERNS = (
+    re.compile(r"^\s*pytest\b"),
+    re.compile(r"^\s*python\s+-m\s+pytest\b"),
+    re.compile(r"^\s*jest\b"),
+    re.compile(r"^\s*npm\s+(?:run\s+)?test\b"),
+    re.compile(r"^\s*yarn\s+test\b"),
+    re.compile(r"^\s*go\s+test\b"),
+    re.compile(r"^\s*cargo\s+test\b"),
+    re.compile(r"^\s*mocha\b"),
+    re.compile(r"^\s*vitest\b"),
+    re.compile(r"^\s*rspec\b"),
+    re.compile(r"^\s*bundle\s+exec\s+rspec\b"),
+)
+
+
+def parse_claude_code_jsonl(run_id: str, jsonl_text: str) -> list[TranscriptEvent]:
+    """Parse a Claude Code session JSONL into normalized transcript events.
+
+    Never raises. Malformed lines become parse_error events; the rest still parse.
+    """
+    events: list[TranscriptEvent] = []
+    sequence = 0
+
+    for line_num, line in enumerate(jsonl_text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError) as exc:
+            events.append(
+                make_parse_error(
+                    run_id=run_id,
+                    sequence=sequence,
+                    source=SOURCE_CLAUDE_CODE_JSONL,
+                    message=f"JSONL line {line_num} invalid: {exc}",
+                    raw_ref=f"line:{line_num}",
+                )
+            )
+            sequence += 1
+            continue
+
+        try:
+            new_events = _events_from_jsonl_record(
+                run_id=run_id,
+                record=record,
+                line_num=line_num,
+                next_sequence=sequence,
+            )
+        except Exception as exc:
+            events.append(
+                make_parse_error(
+                    run_id=run_id,
+                    sequence=sequence,
+                    source=SOURCE_CLAUDE_CODE_JSONL,
+                    message=f"record parse raised on line {line_num}: {exc}",
+                    raw_ref=f"line:{line_num}",
+                )
+            )
+            sequence += 1
+            continue
+
+        for event in new_events:
+            events.append(event)
+            sequence += 1
+
+    return events
+
+
+def _events_from_jsonl_record(
+    run_id: str,
+    record: dict,
+    line_num: int,
+    next_sequence: int,
+) -> list[TranscriptEvent]:
+    """Translate a single JSONL record into zero or more TranscriptEvents."""
+    out: list[TranscriptEvent] = []
+    seq = next_sequence
+    raw_ref = f"line:{line_num}"
+    timestamp = record.get("timestamp", "") or ""
+
+    # Hook events.
+    attachment = record.get("attachment") or {}
+    if attachment.get("type", "").startswith("hook_") or attachment.get("hookEvent"):
+        out.append(
+            TranscriptEvent(
+                run_id=run_id,
+                sequence=seq,
+                kind=KIND_HOOK_EVENT,
+                tool_name=None,
+                target=attachment.get("hookEvent") or attachment.get("hookName"),
+                inputs_summary="",
+                output_excerpt=truncate(
+                    str(attachment.get("content") or attachment.get("stdout") or ""),
+                    OUTPUT_EXCERPT_MAX,
+                ),
+                status="unknown",
+                source=SOURCE_CLAUDE_CODE_JSONL,
+                timestamp=timestamp,
+                raw_ref=raw_ref,
+            )
+        )
+        seq += 1
+        return out
+
+    message = record.get("message")
+    if not isinstance(message, dict):
+        return out  # skip non-message records silently
+
+    role = message.get("role")
+    content = message.get("content")
+    if not isinstance(content, list):
+        # e.g. string content. Treat as assistant/user message.
+        text = str(content) if content is not None else ""
+        kind = KIND_ASSISTANT_MESSAGE if role == "assistant" else KIND_USER_MESSAGE
+        if text:
+            out.append(
+                TranscriptEvent(
+                    run_id=run_id,
+                    sequence=seq,
+                    kind=kind,
+                    tool_name=None,
+                    target=None,
+                    inputs_summary="",
+                    output_excerpt=truncate(text, OUTPUT_EXCERPT_MAX),
+                    status="unknown",
+                    source=SOURCE_CLAUDE_CODE_JSONL,
+                    timestamp=timestamp,
+                    raw_ref=raw_ref,
+                )
+            )
+            seq += 1
+        return out
+
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+
+        if btype == "text":
+            text = block.get("text", "") or ""
+            if not text.strip():
+                continue
+            kind = KIND_ASSISTANT_MESSAGE if role == "assistant" else KIND_USER_MESSAGE
+            out.append(
+                TranscriptEvent(
+                    run_id=run_id,
+                    sequence=seq,
+                    kind=kind,
+                    tool_name=None,
+                    target=None,
+                    inputs_summary="",
+                    output_excerpt=truncate(text, OUTPUT_EXCERPT_MAX),
+                    status="unknown",
+                    source=SOURCE_CLAUDE_CODE_JSONL,
+                    timestamp=timestamp,
+                    raw_ref=raw_ref,
+                )
+            )
+            seq += 1
+
+        elif btype == "tool_use":
+            tool_name = block.get("name") or "unknown"
+            tool_input = block.get("input") or {}
+            kind = _classify_tool(tool_name, tool_input)
+            target = _extract_target(tool_name, tool_input)
+            out.append(
+                TranscriptEvent(
+                    run_id=run_id,
+                    sequence=seq,
+                    kind=kind,
+                    tool_name=tool_name,
+                    target=target,
+                    inputs_summary=truncate(
+                        json.dumps(tool_input, sort_keys=True, default=str),
+                        INPUTS_SUMMARY_MAX,
+                    ),
+                    output_excerpt="",
+                    status="unknown",
+                    source=SOURCE_CLAUDE_CODE_JSONL,
+                    timestamp=timestamp,
+                    raw_ref=raw_ref,
+                )
+            )
+            seq += 1
+
+        elif btype == "tool_result":
+            # Tool results update the most recent tool_use event's status
+            # and output_excerpt. Do this by modifying the last event in out
+            # if it's a tool event; otherwise emit a standalone user_message.
+            result_content = block.get("content", "")
+            if isinstance(result_content, list):
+                # tool_result content can be a list of content blocks
+                result_text = "".join(
+                    c.get("text", "") if isinstance(c, dict) else str(c)
+                    for c in result_content
+                )
+            else:
+                result_text = str(result_content)
+            is_error = bool(block.get("is_error"))
+            # Find the most recent tool event to attach to.
+            attached = False
+            for ev in reversed(out):
+                if ev.tool_name is not None:
+                    ev.output_excerpt = truncate(result_text, OUTPUT_EXCERPT_MAX)
+                    ev.status = "error" if is_error else "success"
+                    attached = True
+                    break
+            if not attached:
+                out.append(
+                    TranscriptEvent(
+                        run_id=run_id,
+                        sequence=seq,
+                        kind=KIND_USER_MESSAGE,
+                        tool_name=None,
+                        target=None,
+                        inputs_summary="",
+                        output_excerpt=truncate(result_text, OUTPUT_EXCERPT_MAX),
+                        status="error" if is_error else "unknown",
+                        source=SOURCE_CLAUDE_CODE_JSONL,
+                        timestamp=timestamp,
+                        raw_ref=raw_ref,
+                    )
+                )
+                seq += 1
+
+    return out
+
+
+def _classify_tool(tool_name: str, tool_input: dict) -> str:
+    base = _CLAUDE_TOOL_KIND_MAP.get(tool_name, KIND_UNKNOWN)
+    if base == KIND_BASH_COMMAND:
+        command = str(tool_input.get("command", ""))
+        if any(p.search(command) for p in _TEST_COMMAND_PATTERNS):
+            return KIND_TEST_RUN
+    return base
+
+
+def _extract_target(tool_name: str, tool_input: dict) -> str | None:
+    if tool_name in ("Read", "Edit", "Write", "NotebookEdit"):
+        return tool_input.get("file_path") or tool_input.get("notebook_path")
+    if tool_name in ("Grep", "Glob"):
+        return tool_input.get("pattern") or tool_input.get("path")
+    if tool_name == "Bash":
+        return str(tool_input.get("command", "")) or None
+    if tool_name in ("WebFetch", "WebSearch"):
+        return tool_input.get("url") or tool_input.get("query")
+    if tool_name in ("Task", "Agent"):
+        return tool_input.get("subagent_type") or tool_input.get("description")
+    return None
