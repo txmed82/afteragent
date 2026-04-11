@@ -118,9 +118,29 @@ class Store:
 
                 CREATE INDEX IF NOT EXISTS idx_transcript_events_run_seq  ON transcript_events (run_id, sequence);
                 CREATE INDEX IF NOT EXISTS idx_transcript_events_run_kind ON transcript_events (run_id, kind);
+
+                CREATE TABLE IF NOT EXISTS llm_generations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    duration_ms INTEGER NOT NULL,
+                    estimated_cost_usd REAL NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL,
+                    raw_response_excerpt TEXT NOT NULL DEFAULT ''
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_llm_generations_run ON llm_generations (run_id);
                 """
             )
             self._ensure_column(conn, "interventions", "scope", "TEXT NOT NULL DEFAULT 'pr'")
+            self._ensure_column(conn, "diagnoses", "source", "TEXT NOT NULL DEFAULT 'rule'")
+            self._ensure_column(conn, "interventions", "source", "TEXT NOT NULL DEFAULT 'rule'")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {
@@ -188,15 +208,15 @@ class Store:
             conn.execute("DELETE FROM interventions WHERE run_id = ?", (run_id,))
             conn.executemany(
                 """
-                INSERT INTO diagnoses (run_id, code, title, severity, summary, evidence_json)
-                VALUES (:run_id, :code, :title, :severity, :summary, :evidence_json)
+                INSERT INTO diagnoses (run_id, code, title, severity, summary, evidence_json, source)
+                VALUES (:run_id, :code, :title, :severity, :summary, :evidence_json, 'rule')
                 """,
                 findings,
             )
             conn.executemany(
                 """
-                INSERT INTO interventions (run_id, type, title, target, content, scope)
-                VALUES (:run_id, :type, :title, :target, :content, :scope)
+                INSERT INTO interventions (run_id, type, title, target, content, scope, source)
+                VALUES (:run_id, :type, :title, :target, :content, :scope, 'rule')
                 """,
                 interventions,
             )
@@ -326,7 +346,7 @@ class Store:
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT code, title, severity, summary, evidence_json
+                SELECT code, title, severity, summary, evidence_json, source
                 FROM diagnoses
                 WHERE run_id = ?
                 ORDER BY id ASC
@@ -339,8 +359,118 @@ class Store:
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT type, title, target, content, scope
+                SELECT type, title, target, content, scope, source
                 FROM interventions
+                WHERE run_id = ?
+                ORDER BY id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return rows
+
+    def replace_llm_diagnosis(
+        self,
+        run_id: str,
+        findings_rows: list[dict],
+        interventions_rows: list[dict],
+    ) -> None:
+        """Replace only the LLM-sourced findings and interventions for a run.
+
+        Unlike replace_diagnosis (which replaces everything for the run),
+        this method only deletes rows with source='llm' before inserting new
+        ones. Rule-based findings/interventions from a prior analyze_run pass
+        are preserved untouched.
+        """
+        with self.connection() as conn:
+            conn.execute(
+                "DELETE FROM diagnoses WHERE run_id = ? AND source = 'llm'",
+                (run_id,),
+            )
+            conn.execute(
+                "DELETE FROM interventions WHERE run_id = ? AND source = 'llm'",
+                (run_id,),
+            )
+            if findings_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO diagnoses (
+                        run_id, code, title, severity, summary, evidence_json, source
+                    )
+                    VALUES (
+                        :run_id, :code, :title, :severity, :summary, :evidence_json, :source
+                    )
+                    """,
+                    findings_rows,
+                )
+            if interventions_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO interventions (
+                        run_id, type, title, target, content, scope, source
+                    )
+                    VALUES (
+                        :run_id, :type, :title, :target, :content, :scope, :source
+                    )
+                    """,
+                    interventions_rows,
+                )
+
+    def record_llm_generation(
+        self,
+        run_id: str,
+        kind: str,
+        provider: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        duration_ms: int,
+        estimated_cost_usd: float,
+        status: str,
+        error_message: str | None,
+        created_at: str,
+        raw_response_excerpt: str,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO llm_generations (
+                    run_id, kind, provider, model,
+                    input_tokens, output_tokens, duration_ms,
+                    estimated_cost_usd, status, error_message,
+                    created_at, raw_response_excerpt
+                )
+                VALUES (
+                    :run_id, :kind, :provider, :model,
+                    :input_tokens, :output_tokens, :duration_ms,
+                    :estimated_cost_usd, :status, :error_message,
+                    :created_at, :raw_response_excerpt
+                )
+                """,
+                {
+                    "run_id": run_id,
+                    "kind": kind,
+                    "provider": provider,
+                    "model": model,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "duration_ms": duration_ms,
+                    "estimated_cost_usd": estimated_cost_usd,
+                    "status": status,
+                    "error_message": error_message,
+                    "created_at": created_at,
+                    "raw_response_excerpt": raw_response_excerpt,
+                },
+            )
+
+    def get_llm_generations(self, run_id: str) -> list[sqlite3.Row]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, run_id, kind, provider, model,
+                       input_tokens, output_tokens, duration_ms,
+                       estimated_cost_usd, status, error_message,
+                       created_at, raw_response_excerpt
+                FROM llm_generations
                 WHERE run_id = ?
                 ORDER BY id ASC
                 """,
