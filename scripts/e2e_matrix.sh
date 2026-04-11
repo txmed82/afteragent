@@ -22,3 +22,16 @@ python3 -m pytest -v \
     tests/test_adapters_codex.py \
     tests/test_adapters_generic.py \
     tests/test_capture.py
+
+echo
+echo "Running LLM diagnosis tests..."
+python3 -m pytest -v \
+    tests/test_llm_config.py \
+    tests/test_llm_cost_table.py \
+    tests/test_llm_client.py \
+    tests/test_llm_schemas.py \
+    tests/test_llm_prompts.py \
+    tests/test_llm_merge.py \
+    tests/test_llm_enhancer.py \
+    tests/test_store_llm.py \
+    tests/test_diagnostics_llm_hook.py

@@ -34,6 +34,9 @@ Repository = "https://github.com/txmed82/afteragent"
 Issues = "https://github.com/txmed82/afteragent/issues"
 
 [project.optional-dependencies]
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.50"]
+all = ["anthropic>=0.40", "openai>=1.50"]
 dev = ["jsonschema>=4.22"]
 
 [tool.setuptools]
