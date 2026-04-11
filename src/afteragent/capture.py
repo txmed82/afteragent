@@ -27,8 +27,16 @@ def run_command(
     stream_output: bool = True,
     extra_env: dict[str, str] | None = None,
     adapter: RunnerAdapter | None = None,
+    task_prompt: str | None = None,  # NEW
 ) -> dict[str, str | int]:
     active_adapter = adapter or select_runner_adapter(cwd, command=command)
+
+    # Three-tier task prompt resolution: explicit kwarg > adapter parse > full command.
+    if task_prompt is not None:
+        resolved_task_prompt = task_prompt
+    else:
+        parsed = active_adapter.parse_task_prompt(command)
+        resolved_task_prompt = parsed if parsed is not None else shlex.join(command)
     run_id = uuid.uuid4().hex[:12]
     command_text = shlex.join(command)
     created_at = now_utc()
@@ -39,6 +47,7 @@ def run_command(
         created_at,
         summary=summary or "Captured by afteragent exec",
     )
+    store.set_run_task_prompt(run_id, resolved_task_prompt)
     store.add_event(
         run_id,
         "run.started",

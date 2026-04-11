@@ -101,6 +101,16 @@ class RunnerAdapter:
             events.extend(self._parse_pattern_events(text, source=path.name))
         return dedupe_events(events)
 
+    def parse_task_prompt(self, command: list[str]) -> str | None:
+        """Extract the user-facing task prompt from a runner invocation.
+
+        Default implementation returns None — callers in capture.run_command
+        fall back to shlex.join(command) as the last-resort task prompt.
+        Runner subclasses override this with runner-specific parsing logic.
+        """
+        del command
+        return None
+
     def pre_launch_snapshot(self, cwd: Path) -> dict:
         """Snapshot runner-specific pre-launch state (e.g. transcript directory).
 
@@ -222,6 +232,37 @@ class ClaudeCodeAdapter(RunnerAdapter):
             ("file.edited", re.compile(r"^(?:edited|updated|created)\s+(?P<path>[A-Za-z0-9_./-]+\.[A-Za-z0-9]+)", re.I), "path"),
             ("retry.detected", re.compile(r"^(?:retrying|attempt)\s*#?(?P<attempt>[0-9]+)", re.I), "attempt"),
         ]
+
+    def parse_task_prompt(self, command: list[str]) -> str | None:
+        """Extract the task prompt from a Claude Code command.
+
+        Supported shapes:
+            claude "fix the failing test"
+            claude -p "fix the failing test"
+            claude --print "fix the failing test"
+            claude --print="quick task"
+            claude --dangerously-skip-permissions -p "fix the failing test"
+            claude --dangerously-skip-permissions "fix the failing test"
+        """
+        if not command or Path(command[0]).name.lower() not in self.command_names:
+            return None
+        if len(command) < 2:
+            return None
+        args = command[1:]
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg in ("-p", "--print"):
+                if i + 1 < len(args):
+                    return args[i + 1]
+                return None
+            if arg.startswith("--print="):
+                return arg[len("--print="):]
+            if arg.startswith("-"):
+                i += 1
+                continue
+            return arg
+        return None
 
     def transcript_file_globs(self) -> tuple[str, ...]:
         return ("claude*.log", "claude*.jsonl")
@@ -356,6 +397,35 @@ class CodexAdapter(RunnerAdapter):
         if command or source_command:
             return super().detect(cwd, command, source_command)
         return (cwd / "AGENTS.md").exists()
+
+    def parse_task_prompt(self, command: list[str]) -> str | None:
+        """Extract the task prompt from a Codex command.
+
+        Supported shapes:
+            codex "fix the failing test"
+            codex run "fix the failing test"
+            codex -p "fix the failing test"
+            codex --prompt "summarize changes"
+        """
+        if not command or Path(command[0]).name.lower() not in self.command_names:
+            return None
+        if len(command) < 2:
+            return None
+        args = command[1:]
+        if args and args[0] == "run":
+            args = args[1:]
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg in ("-p", "--prompt"):
+                if i + 1 < len(args):
+                    return args[i + 1]
+                return None
+            if arg.startswith("-"):
+                i += 1
+                continue
+            return arg
+        return None
 
     def parse_transcript(
         self,
