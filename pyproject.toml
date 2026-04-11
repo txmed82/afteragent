@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "afteragent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Capture agent runs, diagnose failure patterns, and generate workflow interventions."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,6 +32,12 @@ afteragent = "afteragent.cli:main"
 Homepage = "https://github.com/txmed82/afteragent"
 Repository = "https://github.com/txmed82/afteragent"
 Issues = "https://github.com/txmed82/afteragent/issues"
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.50"]
+all = ["anthropic>=0.40", "openai>=1.50"]
+dev = ["jsonschema>=4.22"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

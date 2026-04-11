@@ -216,3 +216,61 @@ AfterAction is currently local-first:
 - small built-in UI served from the CLI
 
 That keeps the loop inspectable and easy to run in a normal repository without extra infrastructure.
+
+## LLM-driven diagnosis (sub-project 2)
+
+AfterAgent can optionally run an LLM pass over each captured run to identify failure patterns the rule-based detector missed and to author interventions tailored to that specific run. Four providers are supported: Anthropic, OpenAI, OpenRouter, and Ollama.
+
+### Zero-config: just set an API key
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+afteragent enhance <run-id>
+```
+
+Auto-detect picks `anthropic` + `claude-sonnet-4-5` by default.
+
+### Per-run override
+
+```bash
+afteragent exec --enhance -- claude "fix the failing test"
+```
+
+Forces LLM enhancement for this run even if `auto_enhance_on_exec = false` in config.
+
+### Auto-enhance every run
+
+Create `.afteragent/config.toml`:
+
+```toml
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-5"
+auto_enhance_on_exec = true
+```
+
+### Ollama dogfood (free, local, offline)
+
+```bash
+ollama pull qwen2.5-coder:7b
+mkdir -p .afteragent && cat > .afteragent/config.toml <<EOF
+[llm]
+provider = "ollama"
+model = "qwen2.5-coder:7b"
+EOF
+
+afteragent exec -- claude "fix the failing test"
+afteragent enhance <run-id>
+```
+
+No API key required. Runs entirely on your machine. Recommended for local iteration before spending on hosted API tokens.
+
+### Installing provider SDKs
+
+The anthropic and openai SDKs are optional dependencies:
+
+```bash
+pip install afteragent[anthropic]       # Anthropic only
+pip install afteragent[openai]          # OpenAI / OpenRouter / Ollama
+pip install afteragent[all]             # Both SDKs
+```

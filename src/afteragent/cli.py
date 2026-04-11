@@ -9,6 +9,9 @@ from .adapters import runner_adapter_names
 from .capture import run_command, validate_github_pr
 from .config import resolve_paths
 from .diagnostics import analyze_run
+from .llm.config import load_config
+from .llm.client import get_client
+from .llm.enhancer import enhance_diagnosis_with_llm
 from .store import Store
 from .ui import serve
 from .workflow import apply_interventions, attempt_repair, export_interventions, replay_run
@@ -26,6 +29,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-stream",
         action="store_true",
         help="Do not mirror stdout/stderr live while capturing",
+    )
+    enhance_group = exec_parser.add_mutually_exclusive_group()
+    enhance_group.add_argument(
+        "--enhance",
+        dest="enhance",
+        action="store_true",
+        default=None,
+        help="Force LLM enhancement after the run, overriding config.",
+    )
+    enhance_group.add_argument(
+        "--no-enhance",
+        dest="enhance",
+        action="store_false",
+        default=None,
+        help="Skip LLM enhancement for this run, overriding config.",
     )
     exec_parser.add_argument("cmd", nargs=argparse.REMAINDER)
 
@@ -101,6 +119,17 @@ def build_parser() -> argparse.ArgumentParser:
     ui_parser.add_argument("--host", default="127.0.0.1")
     ui_parser.add_argument("--port", type=int, default=8765)
 
+    enhance_parser = subparsers.add_parser(
+        "enhance", help="Run LLM-driven diagnosis enhancement on a captured run"
+    )
+    enhance_parser.add_argument("run_id", help="Run ID to enhance")
+    enhance_parser.add_argument(
+        "--llm-provider",
+        help="Override LLM provider (anthropic | openai | openrouter | ollama)",
+    )
+    enhance_parser.add_argument("--llm-model", help="Override LLM model name")
+    enhance_parser.add_argument("--llm-base-url", help="Override LLM base URL")
+
     return parser
 
 
@@ -137,6 +166,41 @@ def main(argv: list[str] | None = None) -> int:
         findings, interventions = analyze_run(store, run_id)
         print(f"captured run {run_id}")
         _print_analysis(findings, interventions)
+
+        # Decide whether to auto-enhance. Precedence:
+        # 1. CLI flag (args.enhance is not None)
+        # 2. Config file (auto_enhance_on_exec)
+        # 3. Default: no enhancement
+        should_enhance: bool | None = getattr(args, "enhance", None)
+        if should_enhance is None:
+            config = load_config(store.paths)
+            should_enhance = bool(config and config.auto_enhance_on_exec)
+
+        if should_enhance:
+            config = load_config(store.paths)
+            if config is None:
+                print(
+                    "  (enhance requested but no LLM provider configured — skipping)"
+                )
+            else:
+                try:
+                    client = get_client(config)
+                    enhance_result = enhance_diagnosis_with_llm(
+                        store, run_id, client, config,
+                    )
+                    cost_str = (
+                        f"${enhance_result.total_cost_usd:.4f}"
+                        if enhance_result.total_cost_usd > 0
+                        else "free"
+                    )
+                    print(
+                        f"  enhanced: +{enhance_result.findings_count} findings, "
+                        f"{enhance_result.interventions_count} intervention(s) "
+                        f"({cost_str})"
+                    )
+                except ImportError as exc:
+                    print(f"  (LLM enhancement skipped: {exc})")
+
         return int(result["exit_code"])
 
     if args.command == "runs":
@@ -261,6 +325,44 @@ def main(argv: list[str] | None = None) -> int:
             print("\nUI stopped.")
             return 130
         return 0
+
+    if args.command == "enhance":
+        cli_overrides = {}
+        if args.llm_provider:
+            cli_overrides["provider"] = args.llm_provider
+        if args.llm_model:
+            cli_overrides["model"] = args.llm_model
+        if args.llm_base_url:
+            cli_overrides["base_url"] = args.llm_base_url
+
+        config = load_config(store.paths, cli_overrides=cli_overrides or None)
+        if config is None:
+            print(
+                "No LLM provider configured. Set ANTHROPIC_API_KEY / OPENAI_API_KEY / "
+                "OPENROUTER_API_KEY / OLLAMA_BASE_URL, or create .afteragent/config.toml. "
+                "See `afteragent enhance --help`."
+            )
+            return 1
+
+        try:
+            client = get_client(config)
+        except ImportError as exc:
+            print(f"Cannot instantiate LLM client: {exc}")
+            return 1
+
+        result = enhance_diagnosis_with_llm(store, args.run_id, client, config)
+        cost_str = f"${result.total_cost_usd:.4f}" if result.total_cost_usd > 0 else "free"
+        print(
+            f"Enhanced run {args.run_id}: "
+            f"+{result.findings_count} findings, "
+            f"{result.interventions_count} intervention(s) "
+            f"({result.total_input_tokens} in / {result.total_output_tokens} out tokens, "
+            f"{cost_str})"
+        )
+        if result.error_messages:
+            for err in result.error_messages:
+                print(f"  warning: {err}")
+        return 0 if result.status != "error" else 1
 
     parser.error(f"Unhandled command: {args.command}")
     return 2

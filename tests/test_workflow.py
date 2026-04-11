@@ -244,6 +244,7 @@ def make_paths(root: Path) -> AppPaths:
         exports_dir=root / "exports",
         applied_dir=root / "applied",
         replays_dir=root / "replays",
+        config_path=root / "config.toml",
     )
 
 
