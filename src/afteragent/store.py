@@ -141,6 +141,7 @@ class Store:
             self._ensure_column(conn, "interventions", "scope", "TEXT NOT NULL DEFAULT 'pr'")
             self._ensure_column(conn, "diagnoses", "source", "TEXT NOT NULL DEFAULT 'rule'")
             self._ensure_column(conn, "interventions", "source", "TEXT NOT NULL DEFAULT 'rule'")
+            self._ensure_column(conn, "runs", "task_prompt", "TEXT")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {
@@ -187,6 +188,20 @@ class Store:
                 (status, exit_code, finished_at, duration_ms, summary, run_id),
             )
 
+    def set_run_task_prompt(self, run_id: str, task_prompt: str) -> None:
+        """Record the agent's task prompt for a run. Called from
+        capture.run_command after create_run — keeps the create_run
+        signature stable."""
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE runs
+                SET task_prompt = ?
+                WHERE id = ?
+                """,
+                (task_prompt, run_id),
+            )
+
     def add_event(self, run_id: str, event_type: str, timestamp: str, payload: dict) -> None:
         with self.connection() as conn:
             conn.execute(
@@ -225,7 +240,7 @@ class Store:
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms, summary
+                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms, summary, task_prompt
                 FROM runs
                 ORDER BY created_at DESC
                 """
@@ -236,7 +251,7 @@ class Store:
         with self.connection() as conn:
             row = conn.execute(
                 """
-                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms, summary
+                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms, summary, task_prompt
                 FROM runs
                 WHERE id = ?
                 """,
@@ -332,7 +347,7 @@ class Store:
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms, summary
+                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms, summary, task_prompt
                 FROM runs
                 WHERE cwd = ? AND created_at < ?
                 ORDER BY created_at DESC

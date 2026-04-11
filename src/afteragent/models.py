@@ -15,6 +15,7 @@ class RunRecord:
     finished_at: str | None
     duration_ms: int | None
     summary: str | None
+    task_prompt: str | None  # NEW — nullable, added in sub-project 4
 
 
 @dataclass(slots=True)
