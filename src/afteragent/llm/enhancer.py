@@ -188,16 +188,28 @@ def enhance_diagnosis_with_llm(
         # Remove rules that were explicitly referenced (confirmed or rejected)
         rule_codes_to_remove = list(referenced_rule_codes)
 
-    store.replace_llm_diagnosis(
-        run_id=run_id,
-        findings_rows=[
-            _merged_finding_to_row(run_id, f) for f in merged if f.source == "llm"
-        ],
-        interventions_rows=[
-            _intervention_dict_to_row(run_id, i) for i in llm_interventions
-        ],
-        rule_codes_to_remove=rule_codes_to_remove,
-    )
+    try:
+        store.replace_llm_diagnosis(
+            run_id=run_id,
+            findings_rows=[
+                _merged_finding_to_row(run_id, f) for f in merged if f.source == "llm"
+            ],
+            interventions_rows=[
+                _intervention_dict_to_row(run_id, i) for i in llm_interventions
+            ],
+            rule_codes_to_remove=rule_codes_to_remove,
+        )
+    except Exception as exc:
+        errors.append(f"failed to persist diagnosis: {exc}")
+        return EnhanceResult(
+            status="error",
+            findings_count=0,
+            interventions_count=0,
+            total_input_tokens=total_in,
+            total_output_tokens=total_out,
+            total_cost_usd=total_cost,
+            error_messages=errors,
+        )
 
     # Compute status based on success flags, not merged truthiness
     if not errors:

@@ -399,6 +399,13 @@ class Store:
                     f"DELETE FROM diagnoses WHERE run_id = ? AND source = 'rule' AND code IN ({placeholders})",
                     (run_id, *rule_codes_to_remove),
                 )
+            # When LLM interventions are being inserted, also delete rule-sourced
+            # interventions to ensure LLM interventions supersede them
+            if interventions_rows:
+                conn.execute(
+                    "DELETE FROM interventions WHERE run_id = ? AND source = 'rule'",
+                    (run_id,),
+                )
             if findings_rows:
                 conn.executemany(
                     """
