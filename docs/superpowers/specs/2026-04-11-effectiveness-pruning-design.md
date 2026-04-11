@@ -32,7 +32,7 @@ Sub-projects 4 (broaden past PR repair) and 5 (narrative UI) will both consume t
 3. Compute the report once per `enhance_diagnosis_with_llm` call and thread it through to both prompt builders. Graceful fallback to the sub-project 2 shape (no effectiveness block) if aggregation fails.
 4. Add a new `afteragent stats` CLI subcommand for direct terminal inspection of the effectiveness data. Supports a `--min-samples` flag to control the threshold below which metrics are hidden.
 5. Preserve the never-break-the-run contract from prior sub-projects: every failure mode in sub-project 3 degrades to "run as if sub-project 3 didn't exist." Rule-based diagnosis, sub-project 2's LLM enhancement, and the existing UI all continue working if the effectiveness module itself is broken.
-6. No schema changes. The `replay_runs` table already contains everything the aggregator needs (`comparison_json` + `intervention_manifest_json`). Sub-project 3 is purely additive over the existing schema.
+6. No schema changes. The `replay_runs` table already contains everything the aggregator needs: `comparison_json` is stored directly on each row, and the intervention manifest is obtained by joining `replay_runs.intervention_set_id → intervention_sets.manifest_json` (see `_aggregate_intervention_metrics` in the implementation sketches below). Sub-project 3 is purely additive over the existing schema.
 
 ## Non-goals
 
@@ -549,7 +549,7 @@ Sub-project 3 ships when **all** of the following are true:
 4. When `compute_effectiveness_metrics` raises (simulated), the enhancer still completes successfully and the prompts fall back to the sub-project 2 shape without the effectiveness block.
 5. `afteragent enhance` on a store with zero replays works identically to sub-project 2 — no effectiveness block in the prompt, no visible difference from the user's perspective.
 6. Rule-based diagnosis paths (`afteragent exec` without `--enhance`, `afteragent diagnose`) are completely unchanged. Sub-project 3 is invisible to users who don't use the LLM layer.
-7. All tests pass: sub-project 2's 179 tests still green + ~28 new tests across effectiveness, prompts, enhancer, and CLI ≈ ~207 total pytest tests.
+7. All tests pass: sub-project 2's 179 tests still green + 30 new tests across effectiveness, prompts, enhancer, and CLI ≈ ≈209 total pytest tests.
 8. **Manual dogfood acceptance:** accumulate ≥5 replays on a real project, run `afteragent stats`, confirm the numbers match the stored `comparison_json` rows by spot-check. Then run `afteragent enhance <run-id>` with real LLM credentials and confirm the effectiveness block appears in the prompt (via enhanced logging or by inspecting the LLM's response reasoning). This is the quality-bar step that requires real replay data + real LLM credentials.
 
 ## Known followups (non-blocking)
