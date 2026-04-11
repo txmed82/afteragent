@@ -130,6 +130,17 @@ def build_parser() -> argparse.ArgumentParser:
     enhance_parser.add_argument("--llm-model", help="Override LLM model name")
     enhance_parser.add_argument("--llm-base-url", help="Override LLM base URL")
 
+    stats_parser = subparsers.add_parser(
+        "stats",
+        help="Show effectiveness metrics aggregated from replay history",
+    )
+    stats_parser.add_argument(
+        "--min-samples",
+        type=int,
+        default=5,
+        help="Minimum samples required before a metric is included (default: 5)",
+    )
+
     return parser
 
 
@@ -363,6 +374,15 @@ def main(argv: list[str] | None = None) -> int:
             for err in result.error_messages:
                 print(f"  warning: {err}")
         return 0 if result.status != "error" else 1
+
+    if args.command == "stats":
+        from .effectiveness import (
+            compute_effectiveness_metrics,
+            format_metrics_for_cli,
+        )
+        report = compute_effectiveness_metrics(store, min_samples=args.min_samples)
+        print(format_metrics_for_cli(report))
+        return 0
 
     parser.error(f"Unhandled command: {args.command}")
     return 2

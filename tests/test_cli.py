@@ -115,3 +115,125 @@ def test_exec_enhance_flag_present(tmp_path, monkeypatch):
 
     args = parser.parse_args(["exec", "--no-enhance", "--", "echo", "hi"])
     assert getattr(args, "enhance", None) is False
+
+
+def test_stats_subcommand_empty_store(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    from afteragent.cli import main
+
+    exit_code = main(["stats"])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "No replays recorded yet." in captured.out
+    assert "0 total replays" in captured.out
+
+
+def test_stats_subcommand_populated_store(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    from afteragent.config import resolve_paths
+    from afteragent.store import Store
+    store = Store(resolve_paths())
+
+    # Seed 5 replays with the same finding code, all resolved.
+    for i in range(5):
+        source_id = f"src{i}"
+        replay_id = f"rep{i}"
+        store.create_run(source_id, "echo hi", str(tmp_path), "2026-04-10T12:00:00Z")
+        store.replace_diagnosis(
+            source_id,
+            [{
+                "run_id": source_id,
+                "code": "low_diff_overlap",
+                "title": "x",
+                "severity": "medium",
+                "summary": "x",
+                "evidence_json": "[]",
+            }],
+            [],
+        )
+        store.create_run(replay_id, "echo replay", str(tmp_path), "2026-04-10T13:00:00Z")
+        store.finish_run(replay_id, "passed", 0, "2026-04-10T13:00:01Z", 1000, summary="ok")
+        store.save_intervention_set(
+            set_id=f"iset{i}",
+            source_run_id=source_id,
+            version=1,
+            kind="export",
+            created_at="2026-04-10T13:00:00Z",
+            output_dir="/tmp/fake",
+            manifest={"interventions": []},
+        )
+        store.record_replay_run(
+            source_run_id=source_id,
+            replay_run_id=replay_id,
+            intervention_set_id=f"iset{i}",
+            created_at="2026-04-10T13:00:00Z",
+            applied_before_replay=True,
+            comparison={"resolved_findings": ["low_diff_overlap"], "improved": True, "score": 10},
+        )
+
+    from afteragent.cli import main
+    exit_code = main(["stats"])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "5 total replays" in captured.out
+    assert "Finding code resolution rates:" in captured.out
+    assert "low_diff_overlap" in captured.out
+    assert "100%" in captured.out
+
+
+def test_stats_subcommand_accepts_min_samples_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    from afteragent.config import resolve_paths
+    from afteragent.store import Store
+    store = Store(resolve_paths())
+
+    # Seed 3 replays — below default threshold 5.
+    for i in range(3):
+        source_id = f"src{i}"
+        replay_id = f"rep{i}"
+        store.create_run(source_id, "echo hi", str(tmp_path), "2026-04-10T12:00:00Z")
+        store.replace_diagnosis(
+            source_id,
+            [{
+                "run_id": source_id,
+                "code": "code_x",
+                "title": "x",
+                "severity": "medium",
+                "summary": "x",
+                "evidence_json": "[]",
+            }],
+            [],
+        )
+        store.create_run(replay_id, "echo replay", str(tmp_path), "2026-04-10T13:00:00Z")
+        store.finish_run(replay_id, "passed", 0, "2026-04-10T13:00:01Z", 1000, summary="ok")
+        store.save_intervention_set(
+            set_id=f"iset{i}",
+            source_run_id=source_id,
+            version=1,
+            kind="export",
+            created_at="2026-04-10T13:00:00Z",
+            output_dir="/tmp/fake",
+            manifest={"interventions": []},
+        )
+        store.record_replay_run(
+            source_run_id=source_id,
+            replay_run_id=replay_id,
+            intervention_set_id=f"iset{i}",
+            created_at="2026-04-10T13:00:00Z",
+            applied_before_replay=True,
+            comparison={"resolved_findings": ["code_x"], "improved": True, "score": 10},
+        )
+
+    from afteragent.cli import main
+
+    # With default min_samples=5, metric is below threshold → not shown.
+    exit_code = main(["stats"])
+    captured_default = capsys.readouterr()
+    assert "code_x" not in captured_default.out
+
+    # With --min-samples 3, metric is shown.
+    exit_code = main(["stats", "--min-samples", "3"])
+    captured_low = capsys.readouterr()
+    assert "code_x" in captured_low.out
