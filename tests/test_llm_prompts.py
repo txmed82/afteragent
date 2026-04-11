@@ -52,7 +52,7 @@ def test_load_diagnosis_context_includes_stdout_head_and_tail(tmp_path):
 
     assert "line 0" in ctx.stdout_head
     assert "line 49" in ctx.stdout_head
-    assert "line 149" in ctx.stdout_tail
+    assert "line 150" in ctx.stdout_tail
     assert "line 199" in ctx.stdout_tail
     assert "line 100" not in ctx.stdout_head
     assert "line 100" not in ctx.stdout_tail

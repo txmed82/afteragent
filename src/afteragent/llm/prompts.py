@@ -108,7 +108,7 @@ def _head_and_tail(
 ) -> tuple[str, str]:
     lines = text.splitlines()
     head = "\n".join(lines[:head_lines])
-    tail = "\n".join(lines[-(tail_lines + 1):]) if len(lines) > head_lines else ""
+    tail = "\n".join(lines[-tail_lines:]) if len(lines) > head_lines else ""
     if len(head) > head_char_cap:
         head = head[: head_char_cap - 1] + "\u2026"
     if len(tail) > tail_char_cap:
