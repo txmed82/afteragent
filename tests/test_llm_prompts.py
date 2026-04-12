@@ -405,3 +405,11 @@ def test_build_diagnosis_prompt_omits_task_prompt_section_when_null(tmp_path):
     ctx = load_diagnosis_context(store, "run1")
     _, user = build_diagnosis_prompt(ctx)
     assert "## Task prompt" not in user
+
+
+def test_build_diagnosis_prompt_omits_task_prompt_section_when_whitespace_only(tmp_path):
+    store = _seed_run_with_artifacts(tmp_path)
+    store.set_run_task_prompt("run1", "   \n  ")
+    ctx = load_diagnosis_context(store, "run1")
+    _, user = build_diagnosis_prompt(ctx)
+    assert "## Task prompt" not in user

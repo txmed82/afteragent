@@ -317,8 +317,8 @@ def _build_base_context_block(
     sections: list[str] = []
 
     # Task prompt section at the top when available.
-    if context.run.task_prompt:
-        sections.append(f"## Task prompt\n\n{context.run.task_prompt}")
+    if context.run.task_prompt and context.run.task_prompt.strip():
+        sections.append(f"## Task prompt\n\n{context.run.task_prompt.strip()}")
 
     sections.append(
         f"## Run metadata\n"
