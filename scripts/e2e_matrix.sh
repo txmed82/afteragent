@@ -21,7 +21,8 @@ python3 -m pytest -v \
     tests/test_adapters_claude_code.py \
     tests/test_adapters_codex.py \
     tests/test_adapters_generic.py \
-    tests/test_capture.py
+    tests/test_capture.py \
+    tests/test_store_task_prompt.py
 
 echo
 echo "Running LLM diagnosis tests..."
@@ -36,4 +37,5 @@ python3 -m pytest -v \
     tests/test_store_llm.py \
     tests/test_diagnostics_llm_hook.py \
     tests/test_effectiveness.py \
+    tests/test_diagnostics_generic.py \
     tests/test_cli.py
