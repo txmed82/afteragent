@@ -6,7 +6,14 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .config import AppPaths
-from .models import EventRecord, RunRecord, TranscriptEventRow
+from .models import (
+    CompressionArtifactRecord,
+    EventRecord,
+    MemoryRecord,
+    PendingActionRecord,
+    RunRecord,
+    TranscriptEventRow,
+)
 from .transcripts import TranscriptEvent
 
 
@@ -136,12 +143,79 @@ class Store:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_llm_generations_run ON llm_generations (run_id);
+
+                CREATE TABLE IF NOT EXISTS pending_actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                    action_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL,
+                    approved_at TEXT,
+                    executed_at TEXT,
+                    result_json TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_pending_actions_run ON pending_actions (run_id, status);
+
+                CREATE TABLE IF NOT EXISTS memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    source_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+                    confidence REAL NOT NULL DEFAULT 0,
+                    scope TEXT NOT NULL DEFAULT 'repo',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS memory_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                    link_type TEXT NOT NULL,
+                    link_value TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_memory_links_memory ON memory_links (memory_id);
+                CREATE INDEX IF NOT EXISTS idx_memory_links_lookup ON memory_links (link_type, link_value);
+
+                CREATE TABLE IF NOT EXISTS memory_hits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                    reason TEXT NOT NULL,
+                    score REAL NOT NULL DEFAULT 0
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_memory_hits_run ON memory_hits (run_id, score DESC);
+
+                CREATE TABLE IF NOT EXISTS compressed_artifacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                    artifact_kind TEXT NOT NULL,
+                    artifact_name TEXT NOT NULL,
+                    original_text TEXT NOT NULL,
+                    compressed_text TEXT NOT NULL,
+                    strategy TEXT NOT NULL,
+                    original_size INTEGER NOT NULL,
+                    compressed_size INTEGER NOT NULL,
+                    preserved_count INTEGER NOT NULL DEFAULT 0,
+                    fallback_reason TEXT,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_compressed_artifacts_run ON compressed_artifacts (run_id, artifact_kind);
                 """
             )
             self._ensure_column(conn, "interventions", "scope", "TEXT NOT NULL DEFAULT 'pr'")
             self._ensure_column(conn, "diagnoses", "source", "TEXT NOT NULL DEFAULT 'rule'")
             self._ensure_column(conn, "interventions", "source", "TEXT NOT NULL DEFAULT 'rule'")
             self._ensure_column(conn, "runs", "task_prompt", "TEXT")
+            self._ensure_column(conn, "runs", "client_name", "TEXT")
+            self._ensure_column(conn, "runs", "lifecycle_status", "TEXT NOT NULL DEFAULT 'finished'")
+            self._ensure_column(conn, "runs", "finalized_at", "TEXT")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {
@@ -159,14 +233,18 @@ class Store:
         cwd: str,
         created_at: str,
         summary: str | None = None,
+        client_name: str | None = None,
+        lifecycle_status: str = "finished",
     ) -> None:
         with self.connection() as conn:
             conn.execute(
                 """
-                INSERT INTO runs (id, command, cwd, status, exit_code, created_at, summary)
-                VALUES (?, ?, ?, 'running', NULL, ?, ?)
+                INSERT INTO runs (
+                    id, command, cwd, status, exit_code, created_at, summary, client_name, lifecycle_status
+                )
+                VALUES (?, ?, ?, 'running', NULL, ?, ?, ?, ?)
                 """,
-                (run_id, command, cwd, created_at, summary),
+                (run_id, command, cwd, created_at, summary, client_name, lifecycle_status),
             )
 
     def finish_run(
@@ -200,6 +278,22 @@ class Store:
                 WHERE id = ?
                 """,
                 (task_prompt, run_id),
+            )
+
+    def update_run_lifecycle(
+        self,
+        run_id: str,
+        lifecycle_status: str,
+        finalized_at: str | None = None,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE runs
+                SET lifecycle_status = ?, finalized_at = COALESCE(?, finalized_at)
+                WHERE id = ?
+                """,
+                (lifecycle_status, finalized_at, run_id),
             )
 
     def add_event(self, run_id: str, event_type: str, timestamp: str, payload: dict) -> None:
@@ -240,7 +334,8 @@ class Store:
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms, summary, task_prompt
+                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms,
+                       summary, task_prompt, client_name, lifecycle_status, finalized_at
                 FROM runs
                 ORDER BY created_at DESC
                 """
@@ -251,7 +346,8 @@ class Store:
         with self.connection() as conn:
             row = conn.execute(
                 """
-                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms, summary, task_prompt
+                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms,
+                       summary, task_prompt, client_name, lifecycle_status, finalized_at
                 FROM runs
                 WHERE id = ?
                 """,
@@ -347,7 +443,8 @@ class Store:
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms, summary, task_prompt
+                SELECT id, command, cwd, status, exit_code, created_at, finished_at, duration_ms,
+                       summary, task_prompt, client_name, lifecycle_status, finalized_at
                 FROM runs
                 WHERE cwd = ? AND created_at < ?
                 ORDER BY created_at DESC
@@ -691,6 +788,240 @@ class Store:
                 """
             ).fetchall()
         return rows
+
+    def create_pending_action(
+        self,
+        run_id: str,
+        action_type: str,
+        title: str,
+        payload: dict,
+        created_at: str,
+    ) -> int:
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO pending_actions (
+                    run_id, action_type, title, payload_json, status, created_at
+                )
+                VALUES (?, ?, ?, ?, 'pending', ?)
+                """,
+                (run_id, action_type, title, json.dumps(payload, sort_keys=True), created_at),
+            )
+            return int(cursor.lastrowid)
+
+    def list_pending_actions(
+        self,
+        run_id: str,
+        status: str | None = None,
+    ) -> list[PendingActionRecord]:
+        with self.connection() as conn:
+            if status is None:
+                rows = conn.execute(
+                    """
+                    SELECT id, run_id, action_type, title, payload_json, status, created_at,
+                           approved_at, executed_at, result_json
+                    FROM pending_actions
+                    WHERE run_id = ?
+                    ORDER BY id ASC
+                    """,
+                    (run_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, run_id, action_type, title, payload_json, status, created_at,
+                           approved_at, executed_at, result_json
+                    FROM pending_actions
+                    WHERE run_id = ? AND status = ?
+                    ORDER BY id ASC
+                    """,
+                    (run_id, status),
+                ).fetchall()
+        return [PendingActionRecord(**dict(row)) for row in rows]
+
+    def get_pending_action(self, action_id: int) -> PendingActionRecord | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, run_id, action_type, title, payload_json, status, created_at,
+                       approved_at, executed_at, result_json
+                FROM pending_actions
+                WHERE id = ?
+                """,
+                (action_id,),
+            ).fetchone()
+        return PendingActionRecord(**dict(row)) if row else None
+
+    def approve_pending_action(self, action_id: int, approved_at: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE pending_actions
+                SET status = 'approved', approved_at = ?
+                WHERE id = ?
+                """,
+                (approved_at, action_id),
+            )
+
+    def complete_pending_action(self, action_id: int, status: str, executed_at: str, result: dict) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE pending_actions
+                SET status = ?, executed_at = ?, result_json = ?
+                WHERE id = ?
+                """,
+                (status, executed_at, json.dumps(result, sort_keys=True), action_id),
+            )
+
+    def create_memory(
+        self,
+        kind: str,
+        title: str,
+        summary: str,
+        content: str,
+        source_run_id: str | None,
+        confidence: float,
+        scope: str,
+        created_at: str,
+        links: list[tuple[str, str]] | None = None,
+    ) -> int:
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO memories (
+                    kind, title, summary, content, source_run_id, confidence, scope, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (kind, title, summary, content, source_run_id, confidence, scope, created_at),
+            )
+            memory_id = int(cursor.lastrowid)
+            if links:
+                conn.executemany(
+                    """
+                    INSERT INTO memory_links (memory_id, link_type, link_value)
+                    VALUES (?, ?, ?)
+                    """,
+                    [(memory_id, link_type, link_value) for link_type, link_value in links],
+                )
+            return memory_id
+
+    def find_memory_by_title(self, title: str, scope: str = "repo") -> MemoryRecord | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, kind, title, summary, content, source_run_id, confidence, scope, created_at
+                FROM memories
+                WHERE title = ? AND scope = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (title, scope),
+            ).fetchone()
+        return MemoryRecord(**dict(row)) if row else None
+
+    def list_memories(self, scope: str | None = None, limit: int = 50) -> list[MemoryRecord]:
+        with self.connection() as conn:
+            if scope is None:
+                rows = conn.execute(
+                    """
+                    SELECT id, kind, title, summary, content, source_run_id, confidence, scope, created_at
+                    FROM memories
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, kind, title, summary, content, source_run_id, confidence, scope, created_at
+                    FROM memories
+                    WHERE scope = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (scope, limit),
+                ).fetchall()
+        return [MemoryRecord(**dict(row)) for row in rows]
+
+    def record_memory_hit(self, run_id: str, memory_id: int, reason: str, score: float) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_hits (run_id, memory_id, reason, score)
+                VALUES (?, ?, ?, ?)
+                """,
+                (run_id, memory_id, reason, score),
+            )
+
+    def list_memory_hits(self, run_id: str) -> list[sqlite3.Row]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT mh.run_id, mh.memory_id, mh.reason, mh.score,
+                       m.kind, m.title, m.summary, m.content, m.scope
+                FROM memory_hits mh
+                JOIN memories m ON m.id = mh.memory_id
+                WHERE mh.run_id = ?
+                ORDER BY mh.score DESC, mh.id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return rows
+
+    def save_compressed_artifact(
+        self,
+        run_id: str,
+        artifact_kind: str,
+        artifact_name: str,
+        original_text: str,
+        compressed_text: str,
+        strategy: str,
+        preserved_count: int,
+        created_at: str,
+        fallback_reason: str | None = None,
+    ) -> int:
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO compressed_artifacts (
+                    run_id, artifact_kind, artifact_name, original_text, compressed_text, strategy,
+                    original_size, compressed_size, preserved_count, fallback_reason, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    artifact_kind,
+                    artifact_name,
+                    original_text,
+                    compressed_text,
+                    strategy,
+                    len(original_text),
+                    len(compressed_text),
+                    preserved_count,
+                    fallback_reason,
+                    created_at,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_compressed_artifacts(self, run_id: str) -> list[CompressionArtifactRecord]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, run_id, artifact_kind, artifact_name, original_text, compressed_text,
+                       strategy, original_size, compressed_size, preserved_count,
+                       fallback_reason, created_at
+                FROM compressed_artifacts
+                WHERE run_id = ?
+                ORDER BY id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return [CompressionArtifactRecord(**dict(row)) for row in rows]
 
     def run_artifact_dir(self, run_id: str) -> Path:
         path = self.paths.artifacts_dir / run_id

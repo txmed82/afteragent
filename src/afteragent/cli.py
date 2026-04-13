@@ -12,6 +12,8 @@ from .diagnostics import analyze_run
 from .llm.config import load_config
 from .llm.client import get_client
 from .llm.enhancer import enhance_diagnosis_with_llm
+from .mcp_server import serve_stdio as serve_mcp_stdio
+from .session import approve_actions, finalize_run
 from .store import Store
 from .ui import serve
 from .workflow import apply_interventions, attempt_repair, export_interventions, replay_run
@@ -71,6 +73,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     apply_parser.add_argument("run_id")
 
+    finalize_parser = subparsers.add_parser(
+        "finalize", help="Finalize an MCP-native run and render findings, actions, and compression data"
+    )
+    finalize_parser.add_argument("run_id")
+
+    approve_parser = subparsers.add_parser(
+        "approve", help="Approve and execute pending actions for a run"
+    )
+    approve_parser.add_argument("run_id")
+    approve_parser.add_argument("--action-id", dest="action_ids", type=int, action="append")
+
     replay_parser = subparsers.add_parser(
         "replay", help="Fork a prior run with exported intervention context"
     )
@@ -123,6 +136,14 @@ def build_parser() -> argparse.ArgumentParser:
     ui_parser = subparsers.add_parser("ui", help="Serve the local viewer")
     ui_parser.add_argument("--host", default="127.0.0.1")
     ui_parser.add_argument("--port", type=int, default=8765)
+
+    server_parser = subparsers.add_parser("server", help="Serve AfterAgent as a local MCP stdio server")
+    server_parser.add_argument(
+        "--stdio",
+        action="store_true",
+        default=True,
+        help="Serve over stdio using the MCP JSON-RPC framing (default: true).",
+    )
 
     enhance_parser = subparsers.add_parser(
         "enhance", help="Run LLM-driven diagnosis enhancement on a captured run"
@@ -224,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "runs":
         for run in store.list_runs():
             print(
-                f"{run.id}\t{run.status}\texit={run.exit_code}\t"
+                f"{run.id}\t{run.status}/{run.lifecycle_status}\texit={run.exit_code}\t"
                 f"{run.created_at}\t{run.command}"
             )
         return 0
@@ -242,10 +263,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  created_at: {run.created_at}")
         print(f"  duration_ms: {run.duration_ms}")
         print(f"  summary: {run.summary}")
+        print(f"  client_name: {run.client_name}")
+        print(f"  lifecycle_status: {run.lifecycle_status}")
+        print(f"  finalized_at: {run.finalized_at}")
         print("  events:")
         for event in store.get_events(run.id):
             payload = json.dumps(json.loads(event.payload_json), sort_keys=True)
             print(f"    - {event.timestamp} {event.event_type} {payload}")
+        pending_actions = store.list_pending_actions(run.id)
+        if pending_actions:
+            print("  pending_actions:")
+            for action in pending_actions:
+                print(f"    - {action.id} {action.action_type} {action.status} {action.title}")
         return 0
 
     if args.command == "diagnose":
@@ -272,6 +301,23 @@ def main(argv: list[str] | None = None) -> int:
         manifest = apply_interventions(store, args.run_id, Path.cwd())
         print(f"applied interventions for {args.run_id}")
         print(json.dumps(manifest, indent=2))
+        return 0
+
+    if args.command == "finalize":
+        result = finalize_run(store, args.run_id)
+        print(f"finalized run {args.run_id}")
+        _print_analysis(
+            _finding_objects_from_result(result["findings"]),
+            _intervention_objects_from_result(result["interventions"]),
+        )
+        _print_recommendations(result["recommendations"])
+        _print_pending_actions(result["pending_actions"])
+        _print_compression_report(result["compression_report"])
+        return 0
+
+    if args.command == "approve":
+        results = approve_actions(store, args.run_id, Path.cwd(), args.action_ids)
+        print(json.dumps({"run_id": args.run_id, "results": results}, indent=2))
         return 0
 
     if args.command == "replay":
@@ -343,6 +389,9 @@ def main(argv: list[str] | None = None) -> int:
             print("\nUI stopped.")
             return 130
         return 0
+
+    if args.command == "server":
+        return serve_mcp_stdio(store, Path.cwd())
 
     if args.command == "enhance":
         cli_overrides = {}
@@ -416,6 +465,63 @@ def _print_analysis(findings: list, interventions: list) -> None:
         print("interventions:\n- none")
 
     print()
+
+
+def _print_recommendations(items: list[dict]) -> None:
+    if not items:
+        print("recommendations:\n- none\n")
+        return
+    print("recommendations:")
+    for item in items:
+        print(f"- [{item['kind']}] {item['title']}")
+        print(f"  {item['rationale']}")
+        if item.get("install_command"):
+            print(f"  install: {' '.join(item['install_command'])}")
+    print()
+
+
+def _print_pending_actions(items: list[dict]) -> None:
+    if not items:
+        print("pending actions:\n- none\n")
+        return
+    print("pending actions:")
+    for item in items:
+        print(f"- #{item['id']} {item['type']} [{item['status']}]")
+        print(f"  {item['title']}")
+    print()
+
+
+def _print_compression_report(items: list[dict]) -> None:
+    if not items:
+        print("compression:\n- none\n")
+        return
+    print("compression:")
+    for item in items:
+        print(
+            f"- {item['artifact_kind']} {item['strategy']} "
+            f"{item['original_size']} -> {item['compressed_size']} chars"
+        )
+    print()
+
+
+def _finding_objects_from_result(items: list[dict]) -> list:
+    class Finding:
+        def __init__(self, payload: dict):
+            self.severity = payload["severity"]
+            self.title = payload["title"]
+            self.summary = payload["summary"]
+            self.evidence = payload["evidence"]
+    return [Finding(item) for item in items]
+
+
+def _intervention_objects_from_result(items: list[dict]) -> list:
+    class Intervention:
+        def __init__(self, payload: dict):
+            self.type = payload["type"]
+            self.target = payload["target"]
+            self.title = payload["title"]
+            self.content = payload["content"]
+    return [Intervention(item) for item in items]
 
 
 def normalize_replay_args(
