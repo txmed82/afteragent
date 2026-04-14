@@ -316,7 +316,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "approve":
-        results = approve_actions(store, args.run_id, Path.cwd(), args.action_ids)
+        run = store.get_run(args.run_id)
+        if not run:
+            print(f"Run not found: {args.run_id}", file=sys.stderr)
+            return 1
+        run_cwd = Path(run.cwd)
+        results = approve_actions(store, args.run_id, run_cwd, args.action_ids)
         print(json.dumps({"run_id": args.run_id, "results": results}, indent=2))
         return 0
 

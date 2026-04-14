@@ -48,9 +48,17 @@ def create_memories_for_run(
         title = f"intervention:{intervention.title}"
         if store.find_memory_by_title(title):
             continue
+        # Map intervention.type to memory kind
+        if intervention.type == "instruction_patch":
+            memory_kind = "successful_fix"
+        elif intervention.type == "prompt_patch":
+            memory_kind = "prompt_change"
+        else:
+            # For runtime_guardrail, recommended_tool, and others
+            memory_kind = "recommended_tooling"
         created_ids.append(
             store.create_memory(
-                kind="successful_fix" if intervention.type == "instruction_patch" else "recommended_tooling",
+                kind=memory_kind,
                 title=title,
                 summary=intervention.title,
                 content=intervention.content,
@@ -81,9 +89,13 @@ def create_memories_for_run(
 
 
 def retrieve_memories(store: Store, run_id: str, task_prompt: str, limit: int = 5) -> list[dict]:
+    # Get repository_id from the run
+    run = store.get_run(run_id)
+    repository_id = run.cwd if run else None
+
     prompt_keywords = _keywords(task_prompt)
     hits: list[tuple[float, dict]] = []
-    for memory in store.list_memories(limit=100):
+    for memory in store.list_memories(limit=100, repository_id=repository_id):
         haystack = _keywords(memory.title, memory.summary, memory.content)
         overlap = prompt_keywords & haystack
         if not overlap:

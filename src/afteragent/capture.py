@@ -35,7 +35,11 @@ def run_command(
     if task_prompt is not None:
         resolved_task_prompt = task_prompt
     else:
-        parsed = active_adapter.parse_task_prompt(command)
+        try:
+            parsed = active_adapter.parse_task_prompt(command)
+        except Exception:
+            # Parser exceptions fall back to shlex.join(command)
+            parsed = None
         resolved_task_prompt = parsed if parsed is not None else shlex.join(command)
     run_id = uuid.uuid4().hex[:12]
     command_text = shlex.join(command)

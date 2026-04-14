@@ -125,18 +125,27 @@ def _detect_stuck_on_file(
     if not transcript_events:
         return None
 
-    edits_by_file: dict[str, int] = {}
     max_streak: dict[str, int] = {}
+    current_file: str | None = None
+    current_streak = 0
 
     for event in transcript_events:
         if event.kind == "test_run":
-            edits_by_file.clear()
+            current_file = None
+            current_streak = 0
             continue
         if event.kind == "file_edit" and event.target:
             path = event.target
-            edits_by_file[path] = edits_by_file.get(path, 0) + 1
-            if edits_by_file[path] > max_streak.get(path, 0):
-                max_streak[path] = edits_by_file[path]
+            if path != current_file:
+                # Switching to a different file, reset streak
+                current_file = path
+                current_streak = 1
+            else:
+                # Same file, increment streak
+                current_streak += 1
+            # Update max streak for this file
+            if current_streak > max_streak.get(current_file, 0):
+                max_streak[current_file] = current_streak
 
     stuck_files = {
         path: count

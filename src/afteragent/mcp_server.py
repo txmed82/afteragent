@@ -17,13 +17,25 @@ def _read_message() -> dict | None:
             return None
         if line in {b"\r\n", b"\n"}:
             break
-        key, _, value = line.decode("utf-8").partition(":")
-        headers[key.strip().lower()] = value.strip()
-    length = int(headers.get("content-length", "0"))
+        try:
+            key, _, value = line.decode("utf-8").partition(":")
+            headers[key.strip().lower()] = value.strip()
+        except UnicodeDecodeError:
+            # Malformed header line, skip this message
+            return None
+    try:
+        length = int(headers.get("content-length", "0"))
+    except ValueError:
+        # Invalid Content-Length header
+        return None
     if length <= 0:
         return None
     body = sys.stdin.buffer.read(length)
-    return json.loads(body.decode("utf-8"))
+    try:
+        return json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        # Malformed JSON or encoding
+        return None
 
 
 def _write_message(payload: dict) -> None:
@@ -160,12 +172,14 @@ def serve_stdio(store: Store, cwd: Path) -> int:
                 elif name == "finalize_run":
                     result = _tool_result(finalize_run(store, arguments["run_id"]))
                 elif name == "approve_actions":
+                    run = store.get_run(arguments["run_id"])
+                    run_cwd = Path(run.cwd) if run else Path(arguments.get("cwd") or cwd)
                     result = _tool_result(
                         {
                             "results": approve_actions(
                                 store,
                                 arguments["run_id"],
-                                Path(arguments.get("cwd") or cwd),
+                                run_cwd,
                                 arguments.get("action_ids"),
                             )
                         }

@@ -263,9 +263,9 @@ result = run_command(
 ### Fallback correctness
 
 When extraction falls back to `shlex.join(command)`, downstream consumers still work:
-- `agent_read_edit_divergence` uses the task prompt for substring matching — the full command produces fewer matches than a clean prompt, so the detector fires less confidently on shell-script agents. Acceptable.
-- The LLM prompt's task section shows the full command instead of a clean prompt. LLMs handle this fine — they infer intent from other signals.
+- `agent_read_edit_divergence` compares read and edit path sets without using the task prompt. The fallback command string is never used by this detector. Unaffected.
 - `agent_edits_without_tests` doesn't use the task prompt at all. Unaffected.
+- The LLM prompt's task section shows the full command instead of a clean prompt when the fallback is used. LLMs handle this fine — they infer intent from other signals.
 
 ## Generic detectors
 

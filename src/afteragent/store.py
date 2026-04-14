@@ -216,6 +216,7 @@ class Store:
             self._ensure_column(conn, "runs", "client_name", "TEXT")
             self._ensure_column(conn, "runs", "lifecycle_status", "TEXT NOT NULL DEFAULT 'finished'")
             self._ensure_column(conn, "runs", "finalized_at", "TEXT")
+            self._ensure_column(conn, "memories", "repository_id", "TEXT")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {
@@ -885,16 +886,22 @@ class Store:
         scope: str,
         created_at: str,
         links: list[tuple[str, str]] | None = None,
+        repository_id: str | None = None,
     ) -> int:
+        # Derive repository_id from source_run_id if not provided
+        if repository_id is None and source_run_id:
+            run = self.get_run(source_run_id)
+            repository_id = run.cwd if run else None
+
         with self.connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO memories (
-                    kind, title, summary, content, source_run_id, confidence, scope, created_at
+                    kind, title, summary, content, source_run_id, confidence, scope, created_at, repository_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (kind, title, summary, content, source_run_id, confidence, scope, created_at),
+                (kind, title, summary, content, source_run_id, confidence, scope, created_at, repository_id),
             )
             memory_id = int(cursor.lastrowid)
             if links:
@@ -921,9 +928,9 @@ class Store:
             ).fetchone()
         return MemoryRecord(**dict(row)) if row else None
 
-    def list_memories(self, scope: str | None = None, limit: int = 50) -> list[MemoryRecord]:
+    def list_memories(self, scope: str | None = None, limit: int = 50, repository_id: str | None = None) -> list[MemoryRecord]:
         with self.connection() as conn:
-            if scope is None:
+            if scope is None and repository_id is None:
                 rows = conn.execute(
                     """
                     SELECT id, kind, title, summary, content, source_run_id, confidence, scope, created_at
@@ -933,6 +940,29 @@ class Store:
                     """,
                     (limit,),
                 ).fetchall()
+            elif repository_id is not None:
+                if scope is None:
+                    rows = conn.execute(
+                        """
+                        SELECT id, kind, title, summary, content, source_run_id, confidence, scope, created_at
+                        FROM memories
+                        WHERE repository_id = ?
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                        (repository_id, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT id, kind, title, summary, content, source_run_id, confidence, scope, created_at
+                        FROM memories
+                        WHERE repository_id = ? AND scope = ?
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                        (repository_id, scope, limit),
+                    ).fetchall()
             else:
                 rows = conn.execute(
                     """

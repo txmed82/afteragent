@@ -84,9 +84,22 @@ def _event_to_transcript(run_id: str, sequence: int, payload: dict) -> Transcrip
 def _append_text(path: Path, text: str) -> None:
     if not text:
         return
-    existing = path.read_text() if path.exists() else ""
-    combined = existing + ("" if existing.endswith("\n") or not existing else "\n") + text
-    path.write_text(combined)
+    # Use append mode to avoid O(n²) behavior
+    needs_newline = False
+    if path.exists():
+        # Check if we need a separator newline
+        with path.open("r", encoding="utf-8") as f:
+            try:
+                # Seek to end and read last character
+                f.seek(max(0, path.stat().st_size - 1))
+                last_char = f.read()
+                needs_newline = last_char and not last_char.endswith("\n")
+            except (OSError, UnicodeDecodeError):
+                needs_newline = True
+    with path.open("a", encoding="utf-8") as f:
+        if needs_newline:
+            f.write("\n")
+        f.write(text)
 
 
 def start_run(
@@ -127,22 +140,66 @@ def start_run(
 
 
 def append_events(store: Store, run_id: str, events: list[dict]) -> dict:
-    existing = store.get_transcript_events(run_id)
-    base_sequence = existing[-1].sequence + 1 if existing else 0
-    transcript_events: list[TranscriptEvent] = []
-    artifact_dir = store.run_artifact_dir(run_id)
-    stdout_lines: list[str] = []
-    stderr_lines: list[str] = []
-    for offset, payload in enumerate(events):
-        sequence = base_sequence + offset
-        transcript = _event_to_transcript(run_id, sequence, payload)
-        transcript_events.append(transcript)
-        store.add_event(run_id, payload.get("event_type", "mcp.event"), transcript.timestamp or now_utc(), payload)
-        if transcript.status == "error" or payload.get("stream") == "stderr":
-            stderr_lines.append(transcript.output_excerpt or transcript.inputs_summary)
-        else:
-            stdout_lines.append(transcript.output_excerpt or transcript.inputs_summary)
-    store.add_transcript_events(run_id, transcript_events)
+    # Compute sequences and insert within a single transaction to avoid races
+    with store.connection() as conn:
+        # Get max sequence atomically within the transaction
+        cursor = conn.execute(
+            "SELECT MAX(sequence) as max_seq FROM transcript_events WHERE run_id = ?",
+            (run_id,)
+        )
+        row = cursor.fetchone()
+        base_sequence = (row["max_seq"] + 1) if (row and row["max_seq"] is not None) else 0
+
+        transcript_events: list[TranscriptEvent] = []
+        artifact_dir = store.run_artifact_dir(run_id)
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        for offset, payload in enumerate(events):
+            sequence = base_sequence + offset
+            transcript = _event_to_transcript(run_id, sequence, payload)
+            transcript_events.append(transcript)
+            # Insert event within same transaction
+            payload_json = json.dumps(payload)
+            conn.execute(
+                "INSERT INTO events (run_id, event_type, timestamp, payload_json) VALUES (?, ?, ?, ?)",
+                (run_id, payload.get("event_type", "mcp.event"), transcript.timestamp or now_utc(), payload_json)
+            )
+            if transcript.status == "error" or payload.get("stream") == "stderr":
+                stderr_lines.append(transcript.output_excerpt or transcript.inputs_summary)
+            else:
+                stdout_lines.append(transcript.output_excerpt or transcript.inputs_summary)
+
+        # Insert transcript events within same transaction
+        if transcript_events:
+            conn.executemany(
+                """
+                INSERT INTO transcript_events (
+                    run_id, sequence, kind, tool_name, target,
+                    inputs_summary, output_excerpt, status, source, timestamp, raw_ref
+                )
+                VALUES (
+                    :run_id, :sequence, :kind, :tool_name, :target,
+                    :inputs_summary, :output_excerpt, :status, :source, :timestamp, :raw_ref
+                )
+                """,
+                [
+                    {
+                        "run_id": ev.run_id,
+                        "sequence": ev.sequence,
+                        "kind": ev.kind,
+                        "tool_name": ev.tool_name,
+                        "target": ev.target,
+                        "inputs_summary": ev.inputs_summary,
+                        "output_excerpt": ev.output_excerpt,
+                        "status": ev.status,
+                        "source": ev.source,
+                        "timestamp": ev.timestamp,
+                        "raw_ref": ev.raw_ref,
+                    }
+                    for ev in transcript_events
+                ]
+            )
+
     _append_text(artifact_dir / "stdout.log", "\n".join(line for line in stdout_lines if line))
     _append_text(artifact_dir / "stderr.log", "\n".join(line for line in stderr_lines if line))
     return {"appended": len(transcript_events)}
@@ -329,6 +386,14 @@ def approve_actions(
     cwd: Path,
     action_ids: list[int] | None = None,
 ) -> list[dict]:
+    # Get the run's recorded cwd instead of using the caller's
+    run = store.get_run(run_id)
+    if run:
+        run_cwd = Path(run.cwd)
+    else:
+        # Fallback to provided cwd if run not found
+        run_cwd = cwd
+
     actions = [action for action in store.list_pending_actions(run_id) if action.status == "pending"]
     if action_ids is not None:
         action_id_set = set(action_ids)
@@ -339,28 +404,42 @@ def approve_actions(
         approved_at = now_utc()
         store.approve_pending_action(action.id, approved_at)
         if action.action_type == "apply_repo_instruction_patch":
-            manifest = apply_interventions(store, run_id, cwd)
-            result = {"applied_paths": manifest.get("applied_paths", [])}
-            store.complete_pending_action(action.id, "completed", now_utc(), result)
+            try:
+                manifest = apply_interventions(store, run_id, run_cwd)
+                result = {"applied_paths": manifest.get("applied_paths", [])}
+                store.complete_pending_action(action.id, "completed", now_utc(), result)
+            except Exception as e:
+                result = {"ok": False, "reason": "exception", "error": str(e)}
+                store.complete_pending_action(action.id, "failed", now_utc(), result)
         else:
             command = payload.get("command")
             if not command:
                 result = {"ok": False, "reason": "no_command"}
                 store.complete_pending_action(action.id, "skipped", now_utc(), result)
             else:
-                proc = subprocess.run(command, cwd=str(cwd), capture_output=True, text=True)
-                result = {
-                    "ok": proc.returncode == 0,
-                    "exit_code": proc.returncode,
-                    "stdout": proc.stdout,
-                    "stderr": proc.stderr,
-                    "command": command,
-                }
-                store.complete_pending_action(
-                    action.id,
-                    "completed" if proc.returncode == 0 else "failed",
-                    now_utc(),
-                    result,
-                )
+                try:
+                    # Use shlex.split if command is a string
+                    if isinstance(command, str):
+                        import shlex
+                        command_list = shlex.split(command)
+                    else:
+                        command_list = command
+                    proc = subprocess.run(command_list, cwd=str(run_cwd), capture_output=True, text=True)
+                    result = {
+                        "ok": proc.returncode == 0,
+                        "exit_code": proc.returncode,
+                        "stdout": proc.stdout,
+                        "stderr": proc.stderr,
+                        "command": command,
+                    }
+                    store.complete_pending_action(
+                        action.id,
+                        "completed" if proc.returncode == 0 else "failed",
+                        now_utc(),
+                        result,
+                    )
+                except Exception as e:
+                    result = {"ok": False, "reason": "exception", "error": str(e)}
+                    store.complete_pending_action(action.id, "failed", now_utc(), result)
         results.append({"id": action.id, "type": action.action_type, "title": action.title, "result": result})
     return results

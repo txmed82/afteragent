@@ -29,7 +29,7 @@
 
 **New files:**
 
-```
+```text
 src/afteragent/diagnostics_generic.py       # 5 generic detectors + entry point
 tests/test_diagnostics_generic.py            # ~18 unit tests for the detectors
 tests/test_store_task_prompt.py              # ~4 tests for the new column migration
@@ -37,7 +37,7 @@ tests/test_store_task_prompt.py              # ~4 tests for the new column migra
 
 **Modified files:**
 
-```
+```text
 src/afteragent/store.py                      # task_prompt column migration + set_run_task_prompt method + updated SELECTs
 src/afteragent/models.py                     # RunRecord gains task_prompt field
 src/afteragent/adapters.py                   # RunnerAdapter.parse_task_prompt base + CC/Codex overrides
@@ -221,7 +221,7 @@ All three methods construct `RunRecord(**dict(row))` — adding the column to th
 
 - [ ] **Step 1.7: Run tests**
 
-```
+```bash
 python3 -m pytest tests/test_store_task_prompt.py -v
 python3 -m pytest -v
 ```
@@ -520,7 +520,7 @@ Do NOT change any other line in `run_command`. The rest of the function is uncha
 
 - [ ] **Step 2.10: Run tests**
 
-```
+```bash
 python3 -m pytest tests/test_adapters.py tests/test_capture.py -v
 python3 -m pytest -v
 ```
@@ -654,7 +654,7 @@ Use `getattr(args, "task_prompt", None)` (not `args.task_prompt`) to be defensiv
 
 - [ ] **Step 3.5: Run tests**
 
-```
+```bash
 python3 -m pytest tests/test_cli.py -v
 python3 -m pytest -v
 ```
@@ -1355,7 +1355,7 @@ _DETECTORS: list = [
 
 - [ ] **Step 4.4: Run tests**
 
-```
+```bash
 python3 -m pytest tests/test_diagnostics_generic.py -v
 python3 -m pytest -v
 ```
@@ -1690,7 +1690,7 @@ The indentation should match the existing `if` blocks in `build_interventions` (
 
 - [ ] **Step 5.6: Run tests**
 
-```
+```bash
 python3 -m pytest tests/test_diagnostics.py -v
 python3 -m pytest -v
 ```
@@ -1793,7 +1793,7 @@ The rest of `_build_base_context_block` (run metadata, findings, transcript even
 
 - [ ] **Step 6.4: Run tests**
 
-```
+```bash
 python3 -m pytest tests/test_llm_prompts.py -v
 python3 -m pytest -v
 ```

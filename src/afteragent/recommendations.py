@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from .models import PatternFinding
@@ -15,12 +16,20 @@ class Recommendation:
     setup_command: list[str] | None = None
 
 
+def _has_word_match(text: str, tokens: tuple[str, ...]) -> bool:
+    """Check if any token matches as a whole word in text (case-insensitive)."""
+    for token in tokens:
+        pattern = re.compile(r"\b" + re.escape(token) + r"\b", re.IGNORECASE)
+        if pattern.search(text):
+            return True
+    return False
+
+
 def recommend_tools(
     findings: list[PatternFinding],
     task_prompt: str,
 ) -> list[Recommendation]:
     codes = {finding.code for finding in findings}
-    prompt = task_prompt.lower()
     recommendations: list[Recommendation] = []
 
     if {"active_ci_failures_present", "agent_command_failure_hidden"} & codes:
@@ -43,7 +52,7 @@ def recommend_tools(
             )
         )
 
-    if any(token in prompt for token in ("ui", "frontend", "react", "tailwind", "css")):
+    if _has_word_match(task_prompt, ("ui", "frontend", "react", "tailwind", "css")):
         recommendations.append(
             Recommendation(
                 key="frontend-design",
@@ -61,7 +70,7 @@ def recommend_tools(
             )
         )
 
-    if any(token in prompt for token in ("openai", "gpt", "responses api", "chatgpt", "model")):
+    if _has_word_match(task_prompt, ("openai", "gpt", "chatgpt", "model")):
         recommendations.append(
             Recommendation(
                 key="openai-docs",
@@ -71,7 +80,7 @@ def recommend_tools(
             )
         )
 
-    if any(token in prompt for token in ("browser", "scrape", "website", "dom", "page")):
+    if _has_word_match(task_prompt, ("browser", "scrape", "website", "dom", "page")):
         recommendations.append(
             Recommendation(
                 key="browser-mcp",

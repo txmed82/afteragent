@@ -382,7 +382,7 @@ def test_analyze_run_runs_generic_detectors_alongside_pr_detectors(tmp_path):
         ],
     )
 
-    findings, interventions = analyze_run(store, "run1")
+    findings, _ = analyze_run(store, "run1")
     codes = [f.code for f in findings]
     # The generic detector fires because there's an edit but no test run.
     assert "agent_edits_without_tests" in codes
@@ -414,5 +414,5 @@ def test_analyze_run_generic_detectors_isolated_from_pr_detectors(tmp_path):
     ):
         # analyze_run wraps the generic detector call in try/except and
         # falls back to PR findings only. No exception raised.
-        findings, interventions = analyze_run(store, "run1")
+        findings, _ = analyze_run(store, "run1")
         assert isinstance(findings, list)

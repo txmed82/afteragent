@@ -248,19 +248,41 @@ class ClaudeCodeAdapter(RunnerAdapter):
             return None
         if len(command) < 2:
             return None
+
+        # Options that take a value
+        value_taking_opts = {
+            "--model", "--add-dir", "--system-prompt", "--settings",
+            "--remote", "--agent", "--worktree"
+        }
+
         args = command[1:]
         i = 0
         while i < len(args):
             arg = args[i]
-            if arg in ("-p", "--print"):
-                if i + 1 < len(args):
+            # Handle -p/--print/--prompt (prompt options)
+            if arg in ("-p", "--print", "--prompt"):
+                if i + 1 < len(args) and not args[i + 1].startswith("-"):
                     return args[i + 1]
                 return None
-            if arg.startswith("--print="):
-                return arg[len("--print="):]
+            # Handle --print=/--prompt= inline form
+            if arg.startswith("--print=") or arg.startswith("--prompt="):
+                return arg.split("=", 1)[1] if "=" in arg else None
+            # Handle --option=value forms for value-taking options
+            if "=" in arg:
+                flag = arg.split("=", 1)[0]
+                if flag in value_taking_opts:
+                    i += 1
+                    continue
+            # Handle value-taking options
+            if arg in value_taking_opts:
+                # Skip both the flag and its value
+                i += 2
+                continue
+            # Skip other flags
             if arg.startswith("-"):
                 i += 1
                 continue
+            # First non-flag argument is the prompt
             return arg
         return None
 
@@ -411,19 +433,43 @@ class CodexAdapter(RunnerAdapter):
             return None
         if len(command) < 2:
             return None
+
+        # Options that take a value
+        value_taking_opts = {
+            "--model", "--add-dir", "--system-prompt", "--settings",
+            "--remote", "--agent", "--worktree"
+        }
+
         args = command[1:]
         if args and args[0] == "run":
             args = args[1:]
         i = 0
         while i < len(args):
             arg = args[i]
+            # Handle -p/--prompt (prompt options)
             if arg in ("-p", "--prompt"):
-                if i + 1 < len(args):
+                if i + 1 < len(args) and not args[i + 1].startswith("-"):
                     return args[i + 1]
                 return None
+            # Handle --prompt= inline form
+            if arg.startswith("--prompt="):
+                return arg.split("=", 1)[1] if "=" in arg else None
+            # Handle --option=value forms for value-taking options
+            if "=" in arg:
+                flag = arg.split("=", 1)[0]
+                if flag in value_taking_opts:
+                    i += 1
+                    continue
+            # Handle value-taking options
+            if arg in value_taking_opts:
+                # Skip both the flag and its value
+                i += 2
+                continue
+            # Skip other flags
             if arg.startswith("-"):
                 i += 1
                 continue
+            # First non-flag argument is the prompt
             return arg
         return None
 

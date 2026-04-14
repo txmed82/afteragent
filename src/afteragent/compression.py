@@ -98,6 +98,10 @@ def compress_text(
     if len(compressed) > max_chars:
         compressed = compressed[: max_chars - 1] + "…"
 
+    # Compute preserved_lines from final trimmed output
+    critical_set = set(critical)
+    final_preserved = [line for line in compressed_lines if line in critical_set]
+
     strategy = "deterministic"
     fallback_reason = None
     if compressed == text.strip():
@@ -108,7 +112,7 @@ def compress_text(
         strategy=strategy,
         original_text=text,
         compressed_text=compressed,
-        preserved_lines=critical,
+        preserved_lines=final_preserved,
         fallback_reason=fallback_reason,
     )
 
