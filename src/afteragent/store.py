@@ -855,25 +855,35 @@ class Store:
 
     def approve_pending_action(self, action_id: int, approved_at: str) -> None:
         with self.connection() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE pending_actions
                 SET status = 'approved', approved_at = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'pending'
                 """,
                 (approved_at, action_id),
             )
+            if cursor.rowcount == 0:
+                raise ValueError(
+                    f"Cannot approve pending action {action_id}: "
+                    "action not found or not in 'pending' status"
+                )
 
     def complete_pending_action(self, action_id: int, status: str, executed_at: str, result: dict) -> None:
         with self.connection() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE pending_actions
                 SET status = ?, executed_at = ?, result_json = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'approved'
                 """,
                 (status, executed_at, json.dumps(result, sort_keys=True), action_id),
             )
+            if cursor.rowcount == 0:
+                raise ValueError(
+                    f"Cannot complete pending action {action_id}: "
+                    "action not found or not in 'approved' status"
+                )
 
     def create_memory(
         self,

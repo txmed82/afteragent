@@ -277,8 +277,9 @@ def _detect_zero_meaningful_activity(
         1 for e in transcript_events if e.kind in _MEANINGFUL_KINDS
     )
 
-    if meaningful_count == 0:
-        return None
+    # Allow zero meaningful_count to fall through to the check below
+    # so that the agent_zero_meaningful_activity rule triggers for
+    # both zero and "too few" meaningful events.
     if meaningful_count >= _MIN_MEANINGFUL_EVENTS:
         return None
     if len(changed_files) >= 1:
