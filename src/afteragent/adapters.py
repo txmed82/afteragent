@@ -101,6 +101,16 @@ class RunnerAdapter:
             events.extend(self._parse_pattern_events(text, source=path.name))
         return dedupe_events(events)
 
+    def parse_task_prompt(self, command: list[str]) -> str | None:
+        """Extract the user-facing task prompt from a runner invocation.
+
+        Default implementation returns None — callers in capture.run_command
+        fall back to shlex.join(command) as the last-resort task prompt.
+        Runner subclasses override this with runner-specific parsing logic.
+        """
+        del command
+        return None
+
     def pre_launch_snapshot(self, cwd: Path) -> dict:
         """Snapshot runner-specific pre-launch state (e.g. transcript directory).
 
@@ -222,6 +232,59 @@ class ClaudeCodeAdapter(RunnerAdapter):
             ("file.edited", re.compile(r"^(?:edited|updated|created)\s+(?P<path>[A-Za-z0-9_./-]+\.[A-Za-z0-9]+)", re.I), "path"),
             ("retry.detected", re.compile(r"^(?:retrying|attempt)\s*#?(?P<attempt>[0-9]+)", re.I), "attempt"),
         ]
+
+    def parse_task_prompt(self, command: list[str]) -> str | None:
+        """Extract the task prompt from a Claude Code command.
+
+        Supported shapes:
+            claude "fix the failing test"
+            claude -p "fix the failing test"
+            claude --print "fix the failing test"
+            claude --print="quick task"
+            claude --dangerously-skip-permissions -p "fix the failing test"
+            claude --dangerously-skip-permissions "fix the failing test"
+        """
+        if not command or Path(command[0]).name.lower() not in self.command_names:
+            return None
+        if len(command) < 2:
+            return None
+
+        # Options that take a value
+        value_taking_opts = {
+            "--model", "--add-dir", "--system-prompt", "--settings",
+            "--remote", "--agent", "--worktree"
+        }
+
+        args = command[1:]
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            # Handle -p/--print/--prompt (prompt options)
+            if arg in ("-p", "--print", "--prompt"):
+                if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                    return args[i + 1]
+                return None
+            # Handle --print=/--prompt= inline form
+            if arg.startswith("--print=") or arg.startswith("--prompt="):
+                return arg.split("=", 1)[1] if "=" in arg else None
+            # Handle --option=value forms for value-taking options
+            if "=" in arg:
+                flag = arg.split("=", 1)[0]
+                if flag in value_taking_opts:
+                    i += 1
+                    continue
+            # Handle value-taking options
+            if arg in value_taking_opts:
+                # Skip both the flag and its value
+                i += 2
+                continue
+            # Skip other flags
+            if arg.startswith("-"):
+                i += 1
+                continue
+            # First non-flag argument is the prompt
+            return arg
+        return None
 
     def transcript_file_globs(self) -> tuple[str, ...]:
         return ("claude*.log", "claude*.jsonl")
@@ -356,6 +419,59 @@ class CodexAdapter(RunnerAdapter):
         if command or source_command:
             return super().detect(cwd, command, source_command)
         return (cwd / "AGENTS.md").exists()
+
+    def parse_task_prompt(self, command: list[str]) -> str | None:
+        """Extract the task prompt from a Codex command.
+
+        Supported shapes:
+            codex "fix the failing test"
+            codex run "fix the failing test"
+            codex -p "fix the failing test"
+            codex --prompt "summarize changes"
+        """
+        if not command or Path(command[0]).name.lower() not in self.command_names:
+            return None
+        if len(command) < 2:
+            return None
+
+        # Options that take a value
+        value_taking_opts = {
+            "--model", "--add-dir", "--system-prompt", "--settings",
+            "--remote", "--agent", "--worktree"
+        }
+
+        args = command[1:]
+        if args and args[0] == "run":
+            args = args[1:]
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            # Handle -p/--prompt (prompt options)
+            if arg in ("-p", "--prompt"):
+                if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                    return args[i + 1]
+                return None
+            # Handle --prompt= inline form
+            if arg.startswith("--prompt="):
+                return arg.split("=", 1)[1] if "=" in arg else None
+            # Handle --option=value forms for value-taking options
+            if "=" in arg:
+                flag = arg.split("=", 1)[0]
+                if flag in value_taking_opts:
+                    i += 1
+                    continue
+            # Handle value-taking options
+            if arg in value_taking_opts:
+                # Skip both the flag and its value
+                i += 2
+                continue
+            # Skip other flags
+            if arg.startswith("-"):
+                i += 1
+                continue
+            # First non-flag argument is the prompt
+            return arg
+        return None
 
     def parse_transcript(
         self,

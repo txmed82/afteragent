@@ -326,3 +326,93 @@ def patch_for_files(paths: list[str]) -> str:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_analyze_run_runs_generic_detectors_alongside_pr_detectors(tmp_path):
+    """A run with no GitHub context but with transcript events that match
+    a generic detector should produce at least one generic finding."""
+    from pathlib import Path
+
+    from afteragent.config import resolve_paths
+    from afteragent.diagnostics import analyze_run
+    from afteragent.store import Store
+    from afteragent.transcripts import (
+        KIND_FILE_EDIT,
+        SOURCE_CLAUDE_CODE_JSONL,
+        TranscriptEvent,
+    )
+
+    store = Store(resolve_paths(tmp_path))
+    store.create_run(
+        "run1",
+        "claude 'build feature'",
+        str(tmp_path),
+        "2026-04-11T12:00:00Z",
+    )
+    store.set_run_task_prompt("run1", "build feature")
+
+    artifact_dir = store.run_artifact_dir("run1")
+    (artifact_dir / "stdout.log").write_text("")
+    (artifact_dir / "stderr.log").write_text("")
+    (artifact_dir / "git_diff_before.patch").write_text("")
+    (artifact_dir / "git_diff_after.patch").write_text(
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    store.finish_run("run1", "passed", 0, "2026-04-11T12:00:01Z", 1000, "ok")
+
+    # Add a file_edit transcript event — triggers agent_edits_without_tests.
+    store.add_transcript_events(
+        "run1",
+        [
+            TranscriptEvent(
+                run_id="run1",
+                sequence=0,
+                kind=KIND_FILE_EDIT,
+                tool_name="Edit",
+                target="/repo/foo.py",
+                source=SOURCE_CLAUDE_CODE_JSONL,
+                raw_ref="line:1",
+                timestamp="2026-04-11T12:00:00Z",
+            ),
+        ],
+    )
+
+    findings, _ = analyze_run(store, "run1")
+    codes = [f.code for f in findings]
+    # The generic detector fires because there's an edit but no test run.
+    assert "agent_edits_without_tests" in codes
+
+
+def test_analyze_run_generic_detectors_isolated_from_pr_detectors(tmp_path):
+    """Generic detector failures shouldn't break analyze_run."""
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from afteragent.config import resolve_paths
+    from afteragent.diagnostics import analyze_run
+    from afteragent.store import Store
+
+    store = Store(resolve_paths(tmp_path))
+    store.create_run("run1", "cmd", str(tmp_path), "2026-04-11T12:00:00Z")
+
+    artifact_dir = store.run_artifact_dir("run1")
+    (artifact_dir / "stdout.log").write_text("")
+    (artifact_dir / "stderr.log").write_text("")
+    (artifact_dir / "git_diff_before.patch").write_text("")
+    (artifact_dir / "git_diff_after.patch").write_text("")
+    store.finish_run("run1", "passed", 0, "2026-04-11T12:00:01Z", 1000, "ok")
+
+    # Patch run_generic_detectors to raise — analyze_run must still complete.
+    with patch(
+        "afteragent.diagnostics_generic.run_generic_detectors",
+        side_effect=RuntimeError("simulated generic detector crash"),
+    ):
+        # analyze_run wraps the generic detector call in try/except and
+        # falls back to PR findings only. No exception raised.
+        findings, _ = analyze_run(store, "run1")
+        assert isinstance(findings, list)

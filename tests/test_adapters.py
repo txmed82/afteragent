@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 
 from afteragent.adapters import (
     ClaudeCodeAdapter,
+    CodexAdapter,
     OpenClawAdapter,
     RunnerAdapter,
     ShellAdapter,
@@ -385,3 +386,59 @@ def test_claude_code_adapter_parse_transcript_ambiguous_candidates(tmp_path: Pat
     kinds = [e.kind for e in events[1:]]
     assert "file_read" in kinds
     assert "file_edit" in kinds
+
+
+def test_base_parse_task_prompt_returns_none():
+    adapter = ShellAdapter()
+    assert adapter.parse_task_prompt(["python3", "script.py"]) is None
+
+
+def test_claude_adapter_parses_trailing_positional_prompt():
+    adapter = ClaudeCodeAdapter()
+    assert adapter.parse_task_prompt(["claude", "fix the failing test"]) == "fix the failing test"
+
+
+def test_claude_adapter_parses_dash_p_flag():
+    adapter = ClaudeCodeAdapter()
+    assert adapter.parse_task_prompt(["claude", "-p", "build dark mode"]) == "build dark mode"
+
+
+def test_claude_adapter_parses_long_print_flag():
+    adapter = ClaudeCodeAdapter()
+    assert adapter.parse_task_prompt(["claude", "--print", "refactor auth"]) == "refactor auth"
+
+
+def test_claude_adapter_parses_equals_print_flag():
+    adapter = ClaudeCodeAdapter()
+    assert adapter.parse_task_prompt(["claude", "--print=quick task"]) == "quick task"
+
+
+def test_claude_adapter_parses_prompt_after_permission_flag():
+    adapter = ClaudeCodeAdapter()
+    command = ["claude", "--dangerously-skip-permissions", "-p", "fix the bug"]
+    assert adapter.parse_task_prompt(command) == "fix the bug"
+
+
+def test_claude_adapter_returns_none_for_command_only():
+    adapter = ClaudeCodeAdapter()
+    assert adapter.parse_task_prompt(["claude"]) is None
+
+
+def test_codex_adapter_parses_run_subcommand_prompt():
+    adapter = CodexAdapter()
+    assert adapter.parse_task_prompt(["codex", "run", "add logging"]) == "add logging"
+
+
+def test_codex_adapter_parses_prompt_flag():
+    adapter = CodexAdapter()
+    assert adapter.parse_task_prompt(["codex", "--prompt", "summarize"]) == "summarize"
+
+
+def test_codex_adapter_parses_dash_p_flag():
+    adapter = CodexAdapter()
+    assert adapter.parse_task_prompt(["codex", "-p", "build feature"]) == "build feature"
+
+
+def test_codex_adapter_returns_none_for_command_only():
+    adapter = CodexAdapter()
+    assert adapter.parse_task_prompt(["codex"]) is None

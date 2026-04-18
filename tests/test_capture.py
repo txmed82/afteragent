@@ -308,3 +308,53 @@ def make_paths(root: Path) -> AppPaths:
         replays_dir=root / "replays",
         config_path=root / "config.toml",
     )
+
+
+def test_run_command_auto_parses_task_prompt_from_claude_command(tmp_path: Path):
+    store = Store(resolve_paths(tmp_path))
+    result = run_command(
+        store=store,
+        command=["python3", "-c", "print('noop')"],
+        cwd=tmp_path,
+        adapter=ClaudeCodeAdapter(),
+    )
+    # The adapter-based parse returns None for a python3 command, so the
+    # fallback is shlex.join(command). Verify that's what landed.
+    run = store.get_run(result["run_id"])
+    assert run is not None
+    assert run.task_prompt is not None
+    # Full-command fallback for a command with no recognizable prompt shape.
+    assert "python3" in run.task_prompt
+
+
+def test_run_command_explicit_task_kwarg_wins_over_adapter_parse(tmp_path: Path):
+    store = Store(resolve_paths(tmp_path))
+    result = run_command(
+        store=store,
+        command=["python3", "-c", "print('noop')"],
+        cwd=tmp_path,
+        adapter=ClaudeCodeAdapter(),
+        task_prompt="explicit override task",
+    )
+    run = store.get_run(result["run_id"])
+    assert run is not None
+    assert run.task_prompt == "explicit override task"
+
+
+def test_run_command_falls_back_to_shlex_join_when_adapter_returns_none(tmp_path: Path):
+    """With ShellAdapter (base parse_task_prompt returns None), the task
+    prompt falls back to shlex.join(command)."""
+    from afteragent.adapters import ShellAdapter
+
+    store = Store(resolve_paths(tmp_path))
+    result = run_command(
+        store=store,
+        command=["python3", "-c", "print('noop')"],
+        cwd=tmp_path,
+        adapter=ShellAdapter(),
+    )
+    run = store.get_run(result["run_id"])
+    assert run is not None
+    # shlex.join on the command list.
+    assert "python3" in run.task_prompt
+    assert "print" in run.task_prompt

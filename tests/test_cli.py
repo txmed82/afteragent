@@ -237,3 +237,34 @@ def test_stats_subcommand_accepts_min_samples_flag(tmp_path, monkeypatch, capsys
     exit_code = main(["stats", "--min-samples", "3"])
     captured_low = capsys.readouterr()
     assert "code_x" in captured_low.out
+
+
+def test_exec_accepts_task_flag(tmp_path, monkeypatch):
+    from afteragent.cli import build_parser
+    parser = build_parser()
+
+    args = parser.parse_args([
+        "exec", "--task", "deploy to staging", "--",
+        "python3", "-c", "print('hi')",
+    ])
+    assert getattr(args, "task_prompt", None) == "deploy to staging"
+
+
+def test_exec_populates_task_prompt_from_claude_command_auto(tmp_path, monkeypatch, capsys):
+    """When no --task flag is passed, the adapter's parse_task_prompt (or
+    the shlex.join fallback) populates the column."""
+    monkeypatch.chdir(tmp_path)
+
+    from afteragent.cli import main
+    from afteragent.config import resolve_paths
+    from afteragent.store import Store
+
+    # Use a no-op command so the test doesn't invoke claude.
+    exit_code = main(["exec", "--", "python3", "-c", "print('hi')"])
+    assert exit_code == 0
+
+    store = Store(resolve_paths())
+    runs = store.list_runs()
+    assert len(runs) == 1
+    assert runs[0].task_prompt is not None
+    assert len(runs[0].task_prompt) > 0

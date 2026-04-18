@@ -15,6 +15,10 @@ class RunRecord:
     finished_at: str | None
     duration_ms: int | None
     summary: str | None
+    task_prompt: str | None  # NEW — nullable, added in sub-project 4
+    client_name: str | None = None
+    lifecycle_status: str = "finished"
+    finalized_at: str | None = None
 
 
 @dataclass(slots=True)
@@ -58,6 +62,49 @@ class Intervention:
     target: str
     content: str
     scope: str = "pr"
+
+
+@dataclass(slots=True)
+class PendingActionRecord:
+    id: int
+    run_id: str
+    action_type: str
+    title: str
+    payload_json: str
+    status: str
+    created_at: str
+    approved_at: str | None
+    executed_at: str | None
+    result_json: str | None
+
+
+@dataclass(slots=True)
+class MemoryRecord:
+    id: int
+    kind: str
+    title: str
+    summary: str
+    content: str
+    source_run_id: str | None
+    confidence: float
+    scope: str
+    created_at: str
+
+
+@dataclass(slots=True)
+class CompressionArtifactRecord:
+    id: int
+    run_id: str
+    artifact_kind: str
+    artifact_name: str
+    original_text: str
+    compressed_text: str
+    strategy: str
+    original_size: int
+    compressed_size: int
+    preserved_count: int
+    fallback_reason: str | None
+    created_at: str
 
 
 def now_utc() -> str:
